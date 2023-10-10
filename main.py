@@ -1,4 +1,5 @@
 import dataclasses
+import re
 import time
 from http.cookies import SimpleCookie
 from typing import Annotated
@@ -46,6 +47,7 @@ class Anime:
     _MAIN_URL: str = "https://anime1.me/"
     _API_URL: str = "https://v.anime1.me/api"
     _USER_AGENT: str = UserAgent().chrome
+    _CATEGORY_ID_PATTERN: re.Pattern = re.compile(r"'categoryID':\s'(.*?)'")
     _PROXY_EXPIRE_SECONDS: int = 5
 
     def __init__(self):
@@ -105,7 +107,13 @@ class Anime:
             if "category" not in body_classes:
                 raise aiohttp.ClientResponseError(request_info=r.request_info, history=r.history, status=status.HTTP_404_NOT_FOUND, message="Not a category page")
 
-        category_id = [i.split("-")[1] for i in body_classes if i.startswith("category-")][0]
+            first_script_text = soup.find("script").text
+            category_id_match = self._CATEGORY_ID_PATTERN.search(first_script_text)
+            if category_id_match is None:
+                raise aiohttp.ClientResponseError(request_info=r.request_info, history=r.history, status=status.HTTP_404_NOT_FOUND, message="Category ID not found")
+            else:
+                category_id = category_id_match.group(1)
+
         articles = soup.find_all("article", id=True)
         episodes: dict[str, Episode] = dict()
         episode_ids: list[str] = list()
