@@ -231,6 +231,8 @@ async def parse_url(url: str, request: Request) -> dict:
         }
     except aiohttp.ClientResponseError as e:
         raise HTTPException(e.status, detail=e.message)
+    except aiohttp.ClientConnectorError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
 
 
 @app.get("/v/{category_id}")
@@ -242,6 +244,8 @@ async def video_series(category_id: str, request: Request) -> Response:
         return Response(content=m3u8_content, media_type="application/x-mpegURL")
     except aiohttp.ClientResponseError as e:
         raise HTTPException(e.status, detail=e.message)
+    except aiohttp.ClientConnectorError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
 
 
 # noinspection PyShadowingBuiltins
@@ -265,6 +269,8 @@ async def video_episode(category_id: str, episode_id: str, range: Annotated[str 
         )
     except aiohttp.ClientResponseError as e:
         raise HTTPException(e.status, detail=e.message)
+    except aiohttp.ClientConnectorError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
 
 
 if __name__ == "__main__":
