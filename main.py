@@ -88,7 +88,7 @@ class Anime:
         }
 
     @staticmethod
-    def _get_video_header(header_range: str | None) -> dict[str, str]:
+    def _get_video_header(header_range: str | None, header_if_range: str | None) -> dict[str, str]:
         headers = {
             "Accept": "*/*",
             "Accept-Encoding": "identity;q=1, *;q=0",
@@ -98,6 +98,8 @@ class Anime:
         }
         if header_range is not None:
             headers["Range"] = header_range
+        if header_if_range is not None:
+            headers["If-Range"] = header_if_range
         return headers
 
     async def _get_series(self, url: str) -> Series:
@@ -187,8 +189,8 @@ class Anime:
         else:
             return None
 
-    async def open_video(self, video: Video, bytes_range: str | None) -> aiohttp.ClientResponse:
-        return await self._client.get(video.url, headers=self._get_video_header(bytes_range))
+    async def open_video(self, video: Video, bytes_range: str | None, bytes_if_range: str | None) -> aiohttp.ClientResponse:
+        return await self._client.get(video.url, headers=self._get_video_header(bytes_range, bytes_if_range))
 
     async def close(self):
         await self._client.close()
@@ -250,11 +252,13 @@ async def video_series(category_id: str, request: Request) -> Response:
 
 # noinspection PyShadowingBuiltins
 @app.get("/v/{category_id}/{episode_id}")
-async def video_episode(category_id: str, episode_id: str, range: Annotated[str | None, Header()] = None):
+async def video_episode(category_id: str, episode_id: str, range: Annotated[str | None, Header()] = None, if_range: Annotated[str | None, Header()] = None):
     anime = await Anime.instance()
     try:
         video = await anime.get_video(category_id, episode_id)
-        video_resp = await anime.open_video(video, range)
+        if video is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Video {category_id}/{episode_id} not found")
+        video_resp = await anime.open_video(video, range, if_range)
         headers = video_resp.headers.copy()
         headers.pop("Date")
         headers.pop("Server")
