@@ -176,7 +176,7 @@ class Anime1API:
             return self._parse_single_post(soup) if self._is_single_post(soup) else None
 
     async def get_video_category(self, category_id: str) -> VideoCategory | None:
-        url = self._MAIN_URL + "?" + parse.urlencode({"cat": category_id})
+        url = self._MAIN_URL + "/?" + parse.urlencode({"cat": category_id})
         async with self._client.get(url, headers=self._get_page_headers()) as r:
             soup = BeautifulSoup(await r.text(), "html.parser")
             return self._parse_category(soup) if self._is_category(soup) else None
@@ -265,6 +265,8 @@ class Anime1Server:
 
     async def get_category_playlist(self, base_uri: str, category_id: str) -> str:
         category = await self._api.get_video_category(category_id)
+        if category is None:
+            raise ValueError("Unknown category")
         return self._build_playlist(base_uri, *category.posts)
 
     async def _get_video(self, post_id: str) -> Video:
@@ -277,6 +279,8 @@ class Anime1Server:
                 del self._video_cache[post_id]
         if video is None:
             video = await self._api.get_video_by_post_id(post_id)
+            if video is None:
+                raise ValueError("Unknown video")
             self._video_cache[post_id] = video
         if len(self._video_cache) > self._CACHE_CLEAN_SIZE:
             for k, v in self._video_cache.items():
@@ -293,13 +297,13 @@ app = FastAPI()
 
 
 @app.get("/")
-async def home(request: Request) -> Response:
+async def api_home(request: Request) -> Response:
     base_url = str(request.base_url).rstrip("/")
     return Response(content=f"Use {base_url}/p?url=<Url> to parse any url", status_code=status.HTTP_200_OK)
 
 
 @app.get("/p")
-async def parse_url(url: str, request: Request) -> dict:
+async def api_parse(url: str, request: Request) -> dict:
     anime = await Anime1Server.instance()
     try:
         base_uri = str(request.base_url).rstrip("/")
@@ -313,11 +317,11 @@ async def parse_url(url: str, request: Request) -> dict:
 
 
 @app.get("/c/{category_id}")
-async def video_series(category_id: str, request: Request) -> Response:
+async def api_category(category_id: str, request: Request) -> Response:
     anime = await Anime1Server.instance()
     try:
         base_uri = str(request.base_url).rstrip("/")
-        m3u8_content = await anime.get_category_playlist(category_id, base_uri)
+        m3u8_content = await anime.get_category_playlist(base_uri, category_id)
         return Response(content=m3u8_content, media_type="application/x-mpegURL")
     except aiohttp.ClientResponseError as e:
         raise HTTPException(e.status, detail=e.message)
@@ -329,7 +333,7 @@ async def video_series(category_id: str, request: Request) -> Response:
 
 # noinspection PyShadowingBuiltins
 @app.get("/v/{post_id}")
-async def video_episode(post_id: str, range: Annotated[str | None, Header()] = None, if_range: Annotated[str | None, Header()] = None):
+async def api_video(post_id: str, range: Annotated[str | None, Header()] = None, if_range: Annotated[str | None, Header()] = None):
     anime = await Anime1Server.instance()
     try:
         video_response = await anime.open_video(post_id, range, if_range)
