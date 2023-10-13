@@ -145,7 +145,7 @@ class Anime1API:
     def _parse_category(soup: BeautifulSoup) -> VideoCategory:
         first_script_text = soup.find("script").text
         category_id = Anime1API._CATEGORY_ID_PATTERN.search(first_script_text).group(1)
-        category_title = soup.find("header").find("h1").text
+        category_title = soup.find("header", attrs={"class": "page-header"}).find("h1", attrs={"class": "page-title"}).text
         posts = Anime1API._parse_video_posts(soup)
 
         return VideoCategory(
