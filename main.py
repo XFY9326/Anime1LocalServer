@@ -43,8 +43,9 @@ class Video:
 
 
 class Anime1API:
-    _MAIN_URL: str = "https://anime1.me"
-    _API_URL: str = "https://v.anime1.me/api"
+    _MAIN_HOST: str = "anime1.me"
+    _MAIN_URL: str = f"https://{_MAIN_HOST}"
+    _API_URL: str = f"https://v.{_MAIN_HOST}/api"
     _USER_AGENT: str = UserAgent().chrome
     _CATEGORY_ID_PATTERN: re.Pattern = re.compile(r"'categoryID':\s'(.*?)'")
     _POST_ORDER_PATTERN: re.Pattern = re.compile(r".*?\[(\d+)]")
@@ -159,6 +160,10 @@ class Anime1API:
         posts = Anime1API._parse_video_posts(soup)
         return posts[0] if len(posts) > 0 else None
 
+    @staticmethod
+    def is_valid_posts_url(url: str) -> bool:
+        return parse.urlparse(url).hostname.endswith(Anime1API._MAIN_HOST)
+
     async def get_video_posts(self, url: str) -> VideoPost | VideoCategory | None:
         async with self._client.get(url, headers=self._get_page_headers()) as r:
             soup = BeautifulSoup(await r.text(), "html.parser")
@@ -233,6 +238,8 @@ class Anime1Server:
         return content.dumps()
 
     async def parse_url(self, base_uri: str, url: str) -> dict:
+        if not self._api.is_valid_posts_url(url):
+            raise ValueError("Invalid url")
         result = await self._api.get_video_posts(url)
         base_uri = base_uri.rstrip("/")
         if result is None:
@@ -293,13 +300,13 @@ class Anime1Server:
         return await self._api.open_video(video, bytes_range, bytes_if_range)
 
 
-app = FastAPI()
+app = FastAPI(docs_url=None, redoc_url=None)
 
 
 @app.get("/")
 async def api_home(request: Request) -> Response:
     base_url = str(request.base_url).rstrip("/")
-    return Response(content=f"Use {base_url}/p?url=<Url> to parse any url", status_code=status.HTTP_200_OK)
+    return Response(content=f"Use {base_url}/p?url=<Url> to parse any valid video posts url", status_code=status.HTTP_200_OK)
 
 
 @app.get("/p")
@@ -333,7 +340,7 @@ async def api_category(category_id: str, request: Request) -> Response:
 
 # noinspection PyShadowingBuiltins
 @app.get("/v/{post_id}")
-async def api_video(post_id: str, range: Annotated[str | None, Header()] = None, if_range: Annotated[str | None, Header()] = None):
+async def api_video(post_id: str, range: Annotated[str | None, Header()] = None, if_range: Annotated[str | None, Header()] = None) -> StreamingResponse:
     anime = await Anime1Server.instance()
     try:
         video_response = await anime.open_video(post_id, range, if_range)
