@@ -32,6 +32,18 @@ Launch local server on `http://127.0.0.1:8000`
 python main.py
 ```
 
+## Packaging
+
+Build by [Nuitka](https://github.com/Nuitka/Nuitka)
+
+```shell
+python build.py
+```
+
+You will find single executable file under `./build` folder
+
+Attention: You need to install compilers for Nuitka first! (See [Nuitka](https://github.com/Nuitka/Nuitka))
+
 ## Url
 
 - `http://127.0.0.1:8000` Home page (Useless)

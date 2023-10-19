@@ -360,6 +360,6 @@ async def api_video(post_id: str, range: Annotated[str | None, Header()] = None,
 
 
 if __name__ == "__main__":
-    uvicorn_config = uvicorn.Config(app="main:app", host="127.0.0.1", port=8000)
+    uvicorn_config = uvicorn.Config(app=app, host="127.0.0.1", port=8000)
     uvicorn_server = uvicorn.Server(config=uvicorn_config)
     uvicorn_server.run()
