@@ -56,17 +56,34 @@ Attention: You need to install compilers for Nuitka first! (See [Nuitka](https:/
 List all videos under this category
 
 ```
-http://127.0.0.1:8000/parse?url=https://anime1.me/category/2012%e5%b9%b4%e5%a4%8f%e5%ad%a3/%e5%88%80%e5%8a%8d%e7%a5%9e%e5%9f%9f-sword-art-online
+http://127.0.0.1:8000/p?url=https://anime1.me/category/2013年春季/進擊的巨人
+```
+
+```json5
+{
+    "type": "category",
+    "id": "90",
+    "title": "進擊的巨人",
+    "url": "http://127.0.0.1:8000/c/90",
+    "videos": [
+        {
+            "id": "1213",
+            "title": "進擊的巨人 [01]",
+            "url": "http://127.0.0.1:8000/v/1213"
+        },
+        // More videos ...
+    ]
+}
 ```
 
 Open this category as m3u8 playlist
 
 ```
-http://127.0.0.1:8000/c/82
+http://127.0.0.1:8000/c/90
 ```
 
-Play video
+Play specific video in browser
 
 ```
-http://127.0.0.1:8000/v/1136
+http://127.0.0.1:8000/v/1213
 ```
