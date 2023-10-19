@@ -8,10 +8,6 @@ VERSION = "0.0.0.1"
 BUILD_DIR = "build"
 MAIN_ENTRY = ".\\main.py"
 
-INCLUDE_PACKAGE_DATA = [
-    "fake_useragent"
-]
-
 if __name__ == "__main__":
     if find_spec("nuitka") is None:
         assert os.system(f"{sys.executable} -m pip install nuitka") == 0, "Pip nuitka install failed!"
@@ -30,9 +26,7 @@ if __name__ == "__main__":
         f"--file-version=\"{VERSION}\"",
         f"--product-version=\"{VERSION}\"",
         f"--company-name=\"{AUTHOR}\"",
-        f"--copyright=\"© {AUTHOR}. All rights reserved.\""
+        f"--copyright=\"© {AUTHOR}. All rights reserved.\"",
+        MAIN_ENTRY
     ]
-    for pkg in INCLUDE_PACKAGE_DATA:
-        commands.append(f"--include-package-data=\"{pkg}\"")
-    commands.append(MAIN_ENTRY)
     os.system(f"{sys.executable} -m " + " ".join(commands))

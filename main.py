@@ -1,4 +1,5 @@
 import dataclasses
+import enum
 import re
 import time
 from http.cookies import SimpleCookie
@@ -6,10 +7,9 @@ from typing import Annotated, Optional
 from urllib import parse
 
 import aiohttp
-import m3u8
 import uvicorn
+import xspf_lib as xspf
 from bs4 import BeautifulSoup
-from fake_useragent import UserAgent
 from fastapi import FastAPI, Request, Response, Header, BackgroundTasks, HTTPException, status
 from fastapi.responses import StreamingResponse
 
@@ -46,7 +46,7 @@ class Anime1API:
     _MAIN_HOST: str = "anime1.me"
     _MAIN_URL: str = f"https://{_MAIN_HOST}"
     _API_URL: str = f"https://v.{_MAIN_HOST}/api"
-    _USER_AGENT: str = UserAgent().chrome
+    _USER_AGENT: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
     _CATEGORY_ID_PATTERN: re.Pattern = re.compile(r"'categoryID':\s'(.*?)'")
     _POST_ORDER_PATTERN: re.Pattern = re.compile(r".*?\[(\d+)]")
     _PROXY_EXPIRE_OFFSET_SECONDS: int = 5
@@ -162,7 +162,11 @@ class Anime1API:
 
     @staticmethod
     def is_valid_posts_url(url: str) -> bool:
-        return parse.urlparse(url).hostname.endswith(Anime1API._MAIN_HOST)
+        # noinspection PyBroadException
+        try:
+            return parse.urlparse(url).hostname.endswith(Anime1API._MAIN_HOST)
+        except Exception:
+            return False
 
     async def get_video_posts(self, url: str) -> VideoPost | VideoCategory | None:
         async with self._client.get(url, headers=self._get_page_headers()) as r:
@@ -214,6 +218,23 @@ class Anime1API:
         await self._client.close()
 
 
+@enum.unique
+class PlaylistType(enum.Enum):
+    M3U8 = enum.auto()
+    DPL = enum.auto()
+    DPL_EXT = enum.auto()
+    XSPF = enum.auto()
+    XSPF_EXT = enum.auto()
+
+
+@dataclasses.dataclass(frozen=True)
+class PlaylistInfo:
+    playlist_type: PlaylistType
+    content: str
+    content_type: str
+    file_name: str
+
+
 class Anime1Server:
     _INSTANCE: Optional['Anime1Server'] = None
     _CACHE_CLEAN_SIZE: int = 128
@@ -229,13 +250,63 @@ class Anime1Server:
         return Anime1Server._INSTANCE
 
     @staticmethod
-    def _build_playlist(base_uri: str, *posts: VideoPost) -> str:
-        content = m3u8.M3U8()
+    def _build_m3u8(base_uri: str, category: VideoCategory) -> str:
+        content = "#EXTM3U" + "\n"
         base_uri = base_uri.rstrip('/')
-        for post in posts:
-            segment = m3u8.Segment(uri=f"{base_uri}/v/{post.post_id}", title=post.title, duration=-1)
-            content.add_segment(segment)
-        return content.dumps()
+        for post in category.posts:
+            content += f"#EXTINF:-1,{post.title}" + "\n"
+            content += f"{base_uri}/v/{post.post_id}" + "\n"
+        return content
+
+    # noinspection SpellCheckingInspection
+    @staticmethod
+    def _build_dpl(base_uri: str, category: VideoCategory) -> str:
+        content = "DAUMPLAYLIST" + "\n"
+        content += "topindex=0" + "\n"
+        content += "saveplaypos=0" + "\n"
+        base_uri = base_uri.rstrip('/')
+        for i, post in enumerate(category.posts):
+            content += f"{i + 1}*title*{post.title}" + "\n"
+            content += f"{i + 1}*file*{base_uri}/v/{post.post_id}" + "\n"
+        return content
+
+    # noinspection SpellCheckingInspection
+    @staticmethod
+    def _build_dpl_ext(base_uri: str, category: VideoCategory) -> str:
+        content = "DAUMPLAYLIST" + "\n"
+        content += "topindex=0" + "\n"
+        content += "saveplaypos=0" + "\n"
+        content += f"extplaylist={base_uri}/c/{category.category_id}/m3u8" + "\n"
+        return content
+
+    @staticmethod
+    def _build_xspf(base_uri: str, category: VideoCategory) -> str:
+        base_uri = base_uri.rstrip('/')
+        content = xspf.Playlist(
+            title=category.title,
+            trackList=[
+                xspf.Track(
+                    location=f"{base_uri}/v/{post.post_id}",
+                    title=post.title
+                )
+                for post in category.posts
+            ]
+        )
+        return content.xml_string()
+
+    @staticmethod
+    def _build_xspf_ext(base_uri: str, category: VideoCategory) -> str:
+        base_uri = base_uri.rstrip('/')
+        content = xspf.Playlist(
+            title=category.title,
+            trackList=[
+                xspf.Track(
+                    location=f"{base_uri}/c/{category.category_id}",
+                    title=category.title
+                )
+            ]
+        )
+        return content.xml_string()
 
     async def parse_url(self, base_uri: str, url: str) -> dict:
         if not self._api.is_valid_posts_url(url):
@@ -258,6 +329,10 @@ class Anime1Server:
                 "id": result.category_id,
                 "title": result.title,
                 "url": f"{base_uri}/c/{result.category_id}",
+                "playlists": {
+                    i.name.lower(): f"{base_uri}/c/{result.category_id}?playlist={i.name.lower()}"
+                    for i in PlaylistType
+                },
                 "videos": [
                     {
                         "id": i.post_id,
@@ -270,11 +345,55 @@ class Anime1Server:
         else:
             raise ValueError("Unknown parse type!")
 
-    async def get_category_playlist(self, base_uri: str, category_id: str) -> str:
+    @staticmethod
+    def _parse_playlist_type(playlist_type: str) -> PlaylistType:
+        try:
+            return PlaylistType[playlist_type.strip().upper()]
+        except Exception:
+            raise ValueError(f"Unknown playlist type {playlist_type}")
+
+    async def get_category_playlist(self, base_uri: str, category_id: str, playlist_type: str | None) -> PlaylistInfo:
+        playlist = self._parse_playlist_type(playlist_type) if playlist_type is not None else PlaylistType.M3U8
         category = await self._api.get_video_category(category_id)
         if category is None:
             raise ValueError("Unknown category")
-        return self._build_playlist(base_uri, *category.posts)
+        if playlist == PlaylistType.M3U8:
+            return PlaylistInfo(
+                playlist_type=playlist,
+                content=self._build_m3u8(base_uri, category),
+                content_type="application/x-mpegURL",
+                file_name=f"{category.title}.m3u8"
+            )
+        elif playlist == PlaylistType.DPL:
+            return PlaylistInfo(
+                playlist_type=playlist,
+                content=self._build_dpl(base_uri, category),
+                content_type="text/plain",
+                file_name=f"{category.title}.dpl"
+            )
+        elif playlist == PlaylistType.DPL_EXT:
+            return PlaylistInfo(
+                playlist_type=playlist,
+                content=self._build_dpl_ext(base_uri, category),
+                content_type="text/plain",
+                file_name=f"{category.title}.dpl"
+            )
+        elif playlist == PlaylistType.XSPF:
+            return PlaylistInfo(
+                playlist_type=playlist,
+                content=self._build_xspf(base_uri, category),
+                content_type="application/xspf+xml",
+                file_name=f"{category.title}.xspf"
+            )
+        elif playlist == PlaylistType.XSPF_EXT:
+            return PlaylistInfo(
+                playlist_type=playlist,
+                content=self._build_xspf_ext(base_uri, category),
+                content_type="application/xspf+xml",
+                file_name=f"{category.title}.xspf"
+            )
+        else:
+            raise ValueError(f"Unhandled playlist type {playlist}")
 
     async def _get_video(self, post_id: str) -> Video:
         current_time = time.time()
@@ -310,7 +429,7 @@ async def api_home(request: Request) -> Response:
 
 
 @app.get("/p")
-async def api_parse(url: str, request: Request) -> dict:
+async def api_parse(request: Request, url: str) -> dict:
     anime = await Anime1Server.instance()
     try:
         base_uri = str(request.base_url).rstrip("/")
@@ -319,22 +438,28 @@ async def api_parse(url: str, request: Request) -> dict:
         raise HTTPException(e.status, detail=e.message)
     except aiohttp.ClientConnectorError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
-    except Exception as e:
+    except ValueError as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @app.get("/c/{category_id}")
-async def api_category(category_id: str, request: Request) -> Response:
+async def api_category(request: Request, category_id: str, playlist: str | None = None) -> Response:
     anime = await Anime1Server.instance()
     try:
         base_uri = str(request.base_url).rstrip("/")
-        m3u8_content = await anime.get_category_playlist(base_uri, category_id)
-        return Response(content=m3u8_content, media_type="application/x-mpegURL")
+        playlist_info = await anime.get_category_playlist(base_uri, category_id, playlist)
+        return Response(
+            content=playlist_info.content,
+            headers={
+                "Content-Disposition": f"attachment; filename=\"{parse.quote(playlist_info.file_name)}\""
+            } if playlist is not None else None,
+            media_type=playlist_info.content_type
+        )
     except aiohttp.ClientResponseError as e:
         raise HTTPException(e.status, detail=e.message)
     except aiohttp.ClientConnectorError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
-    except Exception as e:
+    except ValueError as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
@@ -362,7 +487,7 @@ async def api_video(post_id: str, range: Annotated[str | None, Header()] = None,
         raise HTTPException(e.status, detail=e.message)
     except aiohttp.ClientConnectorError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
-    except Exception as e:
+    except ValueError as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
