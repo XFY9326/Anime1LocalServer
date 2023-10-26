@@ -1,12 +1,20 @@
 import os
+import platform
 import sys
 from importlib.util import find_spec
+from pathlib import Path
+
+BASE_DIR = Path(os.path.dirname(os.path.realpath(__file__)))
 
 PRODUCT_NAME = "Anime1-LocalServer"
 AUTHOR = "XFY9326"
 VERSION = "0.0.0.1"
 BUILD_DIR = "build"
-MAIN_ENTRY = ".\\main.py"
+MAIN_ENTRY = BASE_DIR.joinpath("stray.py")
+ICON_PATH = BASE_DIR.joinpath("assets", "icon.png")
+RESOURCES_MAP = {
+    ICON_PATH: "assets/icon.png"
+}
 
 if __name__ == "__main__":
     if find_spec("nuitka") is None:
@@ -15,7 +23,7 @@ if __name__ == "__main__":
     # noinspection SpellCheckingInspection
     commands = [
         "nuitka",
-        "--enable-console",
+        "--disable-console",
         "--onefile",
         "--follow-imports",
         "--assume-yes-for-downloads",
@@ -26,7 +34,15 @@ if __name__ == "__main__":
         f"--file-version=\"{VERSION}\"",
         f"--product-version=\"{VERSION}\"",
         f"--company-name=\"{AUTHOR}\"",
-        f"--copyright=\"© {AUTHOR}. All rights reserved.\"",
-        MAIN_ENTRY
+        f"--copyright=\"© {AUTHOR}. All rights reserved.\""
     ]
+    if platform.system() == "Windows":
+        commands.append(f"--windows-icon-from-ico=\"{ICON_PATH}\"")
+    elif platform.system() == "Darwin":
+        commands.append(f"--macos-app-icon=\"{ICON_PATH}\"")
+    elif platform.system() == "Linux":
+        commands.append(f"--linux-icon=\"{ICON_PATH}\"")
+    for k, v in RESOURCES_MAP.items():
+        commands.append(f"--include-data-files=\"{k}={v}\"")
+    commands.append(str(MAIN_ENTRY))
     os.system(f"{sys.executable} -m " + " ".join(commands))

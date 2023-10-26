@@ -2,7 +2,9 @@ import dataclasses
 import enum
 import re
 import time
+from copy import deepcopy
 from http.cookies import SimpleCookie
+from pathlib import Path
 from typing import Annotated, Optional
 from urllib import parse
 
@@ -10,7 +12,7 @@ import aiohttp
 import uvicorn
 import xspf_lib as xspf
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, Request, Response, Header, BackgroundTasks, HTTPException, status
+from fastapi import FastAPI, APIRouter, Request, Response, Header, BackgroundTasks, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 
@@ -419,79 +421,105 @@ class Anime1Server:
         return await self._api.open_video(video, bytes_range, bytes_if_range)
 
 
-app = FastAPI(docs_url=None, redoc_url=None)
+# noinspection PyMethodMayBeStatic
+def main_router():
+    router = APIRouter()
+
+    @router.get("/")
+    async def index(request: Request) -> Response:
+        base_url = str(request.base_url).rstrip("/")
+        return Response(content=f"Use {base_url}/p?url=<Url> to parse any valid video posts url", status_code=status.HTTP_200_OK)
+
+    @router.get("/p")
+    async def parser(request: Request, url: str) -> dict:
+        anime = await Anime1Server.instance()
+        try:
+            base_uri = str(request.base_url).rstrip("/")
+            return await anime.parse_url(base_uri, url)
+        except aiohttp.ClientResponseError as e:
+            raise HTTPException(e.status, detail=e.message)
+        except aiohttp.ClientConnectorError as e:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+    @router.get("/c/{category_id}")
+    async def category(request: Request, category_id: str, playlist: str | None = None) -> Response:
+        anime = await Anime1Server.instance()
+        try:
+            base_uri = str(request.base_url).rstrip("/")
+            playlist_info = await anime.get_category_playlist(base_uri, category_id, playlist)
+            return Response(
+                content=playlist_info.content,
+                headers={
+                    "Content-Disposition": f"attachment; filename=\"{parse.quote(playlist_info.file_name)}\""
+                } if playlist is not None else None,
+                media_type=playlist_info.content_type
+            )
+        except aiohttp.ClientResponseError as e:
+            raise HTTPException(e.status, detail=e.message)
+        except aiohttp.ClientConnectorError as e:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+    # noinspection PyShadowingBuiltins
+    @router.get("/v/{post_id}")
+    async def video(post_id: str, range: Annotated[str | None, Header()] = None, if_range: Annotated[str | None, Header()] = None) -> StreamingResponse:
+        anime = await Anime1Server.instance()
+        try:
+            video_response = await anime.open_video(post_id, range, if_range)
+            headers = {
+                k: video_response.headers[k]
+                for k in ["Content-Length", "Content-Range", "Etag", "Last-Modified"]
+                if k in video_response.headers
+            }
+            tasks = BackgroundTasks()
+            tasks.add_task(video_response.wait_for_close)
+            return StreamingResponse(
+                content=video_response.content.iter_any(),
+                status_code=status.HTTP_206_PARTIAL_CONTENT,
+                headers=headers,
+                media_type=video_response.content_type,
+                background=tasks
+            )
+        except aiohttp.ClientResponseError as e:
+            raise HTTPException(e.status, detail=e.message)
+        except aiohttp.ClientConnectorError as e:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+    return router
 
 
-@app.get("/")
-async def api_home(request: Request) -> Response:
-    base_url = str(request.base_url).rstrip("/")
-    return Response(content=f"Use {base_url}/p?url=<Url> to parse any valid video posts url", status_code=status.HTTP_200_OK)
+def build_file_log_config(log_dir: Path) -> dict:
+    log_dir.mkdir(parents=True, exist_ok=True)
+    config: dict = deepcopy(uvicorn.config.LOGGING_CONFIG)
+    for i in config["formatters"].values():
+        # noinspection SpellCheckingInspection
+        i["fmt"] = "[%(asctime)s] " + i["fmt"]
+    for k, v in config["handlers"].items():
+        v["class"] = "logging.FileHandler"
+        v["filename"] = log_dir.joinpath(f"{k}.log")
+        v["encoding"] = "utf-8"
+        del v["stream"]
+    return config
 
 
-@app.get("/p")
-async def api_parse(request: Request, url: str) -> dict:
-    anime = await Anime1Server.instance()
-    try:
-        base_uri = str(request.base_url).rstrip("/")
-        return await anime.parse_url(base_uri, url)
-    except aiohttp.ClientResponseError as e:
-        raise HTTPException(e.status, detail=e.message)
-    except aiohttp.ClientConnectorError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
-@app.get("/c/{category_id}")
-async def api_category(request: Request, category_id: str, playlist: str | None = None) -> Response:
-    anime = await Anime1Server.instance()
-    try:
-        base_uri = str(request.base_url).rstrip("/")
-        playlist_info = await anime.get_category_playlist(base_uri, category_id, playlist)
-        return Response(
-            content=playlist_info.content,
-            headers={
-                "Content-Disposition": f"attachment; filename=\"{parse.quote(playlist_info.file_name)}\""
-            } if playlist is not None else None,
-            media_type=playlist_info.content_type
-        )
-    except aiohttp.ClientResponseError as e:
-        raise HTTPException(e.status, detail=e.message)
-    except aiohttp.ClientConnectorError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
-# noinspection PyShadowingBuiltins
-@app.get("/v/{post_id}")
-async def api_video(post_id: str, range: Annotated[str | None, Header()] = None, if_range: Annotated[str | None, Header()] = None) -> StreamingResponse:
-    anime = await Anime1Server.instance()
-    try:
-        video_response = await anime.open_video(post_id, range, if_range)
-        headers = {
-            k: video_response.headers[k]
-            for k in ["Content-Length", "Content-Range", "Etag", "Last-Modified"]
-            if k in video_response.headers
-        }
-        tasks = BackgroundTasks()
-        tasks.add_task(video_response.wait_for_close)
-        return StreamingResponse(
-            content=video_response.content.iter_any(),
-            status_code=status.HTTP_206_PARTIAL_CONTENT,
-            headers=headers,
-            media_type=video_response.content_type,
-            background=tasks
-        )
-    except aiohttp.ClientResponseError as e:
-        raise HTTPException(e.status, detail=e.message)
-    except aiohttp.ClientConnectorError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+def build_server(host: str, port: int, log_dir: Optional[Path] = None) -> uvicorn.Server:
+    log_config = build_file_log_config(log_dir) if log_dir is not None else uvicorn.config.LOGGING_CONFIG
+    app = FastAPI(docs_url=None, redoc_url=None)
+    app.include_router(main_router())
+    uvicorn_config = uvicorn.Config(
+        app=app,
+        host=host,
+        port=port,
+        server_header=False,
+        log_config=log_config
+    )
+    return uvicorn.Server(config=uvicorn_config)
 
 
 if __name__ == "__main__":
-    uvicorn_config = uvicorn.Config(app=app, host="127.0.0.1", port=8000)
-    uvicorn_server = uvicorn.Server(config=uvicorn_config)
-    uvicorn_server.run()
+    build_server("127.0.0.1", 8520, None).run()
