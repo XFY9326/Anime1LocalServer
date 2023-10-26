@@ -16,6 +16,10 @@ Watch anime in local video player
 - uvicorn
 - xspf_lib
 
+**If you want to use system tray:**
+
+- pystray
+
 ## Usage
 
 Install dependencies  
@@ -25,25 +29,37 @@ Install dependencies
 pip install -r requirements.txt
 ```
 
-Launch local server on `http://127.0.0.1:8520`
+Launch local server in terminal
 
 ```shell
 python main.py
 ```
 
+Launch local server in system tray
+
+```shell
+python tray.py
+```
+
 ## Packaging
 
-*This is not necessary unless you need faster running speed or want to be able to run on a device that does not have a Python environment.*
+*This is not necessary unless you want a better using experience.*
 
-Build by [Nuitka](https://github.com/Nuitka/Nuitka)
+Build with [Nuitka](https://github.com/Nuitka/Nuitka)
+
+**Additional requirements**
+
+- nuitka
+- imageio
+- Nuitka compilers (See [Nuitka](https://github.com/Nuitka/Nuitka))
+
+Build
 
 ```shell
 python build.py
 ```
 
 You will find single executable file under `./build` folder
-
-Attention: You need to install compilers for Nuitka first! (See [Nuitka](https://github.com/Nuitka/Nuitka))
 
 ## Url methods
 

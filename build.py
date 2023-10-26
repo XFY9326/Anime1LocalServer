@@ -10,7 +10,7 @@ PRODUCT_NAME = "Anime1-LocalServer"
 AUTHOR = "XFY9326"
 VERSION = "0.0.0.1"
 BUILD_DIR = "build"
-MAIN_ENTRY = BASE_DIR.joinpath("stray.py")
+MAIN_ENTRY = BASE_DIR.joinpath("tray.py")
 ICON_PATH = BASE_DIR.joinpath("assets", "icon.png")
 RESOURCES_MAP = {
     ICON_PATH: "assets/icon.png"
