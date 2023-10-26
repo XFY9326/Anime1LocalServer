@@ -499,6 +499,7 @@ def build_file_log_config(log_dir: Path) -> dict:
     for i in config["formatters"].values():
         # noinspection SpellCheckingInspection
         i["fmt"] = "[%(asctime)s] " + i["fmt"]
+        i["use_colors"] = False
     for k, v in config["handlers"].items():
         v["class"] = "logging.FileHandler"
         v["filename"] = log_dir.joinpath(f"{k}.log")

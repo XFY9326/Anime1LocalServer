@@ -1,4 +1,5 @@
 import os
+import subprocess
 import platform
 import sys
 from importlib.util import find_spec
@@ -34,7 +35,8 @@ if __name__ == "__main__":
         f"--file-version=\"{VERSION}\"",
         f"--product-version=\"{VERSION}\"",
         f"--company-name=\"{AUTHOR}\"",
-        f"--copyright=\"© {AUTHOR}. All rights reserved.\""
+        f"--copyright=\"© {AUTHOR}. All rights reserved.\"",
+        "--onefile-tempdir-spec=\"%TEMP%/%PRODUCT%/%VERSION%\""
     ]
     if platform.system() == "Windows":
         commands.append(f"--windows-icon-from-ico=\"{ICON_PATH}\"")
@@ -45,4 +47,4 @@ if __name__ == "__main__":
     for k, v in RESOURCES_MAP.items():
         commands.append(f"--include-data-files=\"{k}={v}\"")
     commands.append(str(MAIN_ENTRY))
-    os.system(f"{sys.executable} -m " + " ".join(commands))
+    subprocess.call(f"{sys.executable} -m " + " ".join(commands))
