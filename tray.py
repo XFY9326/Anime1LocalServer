@@ -38,6 +38,7 @@ def main():
     stray: pystray.Icon | None = None
     notify_queue = Queue()
     server_url = f"http://{HOST}:{PORT}"
+    icon = open_image(ICON_PATH)
 
     def on_setup(i: pystray.Icon):
         i.visible = True
@@ -65,24 +66,24 @@ def main():
             signal.raise_signal(signal.SIGINT)
         if stray is not None:
             stray.stop()
+        icon.close()
 
-    with open_image(ICON_PATH) as icon:
-        menu = (
-            pystray.MenuItem("Open", on_open, default=True),
-            pystray.MenuItem("Logs", on_logs),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Exit", lambda: on_exit(False))
-        )
-        stray = pystray.Icon(PRODUCT_NAME, icon, PRODUCT_NAME, menu)
-        stray.run_detached(on_setup)
+    menu = (
+        pystray.MenuItem("Open", on_open, default=True),
+        pystray.MenuItem("Logs", on_logs),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Exit", lambda: on_exit(False))
+    )
+    stray = pystray.Icon(PRODUCT_NAME, icon, PRODUCT_NAME, menu)
+    stray.run_detached(on_setup)
 
-        try:
-            notify_queue.put(Msg(MsgType.NOTIFY, f"Start running: {server_url}"))
-            launch_server(HOST, PORT, LOG_DIR, DEBUG)
-        except KeyboardInterrupt:
-            pass
-        except Exception as e:
-            notify_queue.put(Msg(MsgType.ERROR_EXIT, f"Error: {e}"))
+    try:
+        notify_queue.put(Msg(MsgType.NOTIFY, f"Start running: {server_url}"))
+        launch_server(HOST, PORT, LOG_DIR, DEBUG)
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        notify_queue.put(Msg(MsgType.ERROR_EXIT, f"Error: {e}"))
 
 
 if __name__ == "__main__":
