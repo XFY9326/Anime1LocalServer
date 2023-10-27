@@ -1,20 +1,19 @@
-import asyncio
 import dataclasses
 import enum
-import logging
 import re
 import time
-from http import HTTPStatus
+from copy import deepcopy
 from http.cookies import SimpleCookie
 from pathlib import Path
-from typing import Optional, Callable, Any
+from typing import Annotated, Optional
 from urllib import parse
 
 import aiohttp
-import aiohttp.log
+import uvicorn
 import xspf_lib as xspf
-from aiohttp import web
 from bs4 import BeautifulSoup
+from fastapi import FastAPI, APIRouter, Request, Response, Header, BackgroundTasks, HTTPException, status
+from fastapi.responses import StreamingResponse
 
 
 @dataclasses.dataclass(frozen=True)
@@ -213,9 +212,9 @@ class Anime1API:
         post = await self.get_video_post(post_id)
         return await self.get_video(post) if post is not None else None
 
-    def open_video(self, video: Video, bytes_range: str | None, bytes_if_range: str | None):
+    async def open_video(self, video: Video, bytes_range: str | None, bytes_if_range: str | None) -> aiohttp.ClientResponse:
         headers = self._get_video_headers(bytes_range, bytes_if_range)
-        return self._client.get(video.url, headers=headers)
+        return await self._client.get(video.url, headers=headers)
 
     async def close(self):
         await self._client.close()
@@ -417,142 +416,111 @@ class Anime1Server:
                     del self._video_cache[k]
         return video
 
-    async def open_video(self, post_id: str, bytes_range: str | None, bytes_if_range: str | None):
+    async def open_video(self, post_id: str, bytes_range: str | None, bytes_if_range: str | None) -> aiohttp.ClientResponse:
         video = await self._get_video(post_id)
-        return self._api.open_video(video, bytes_range, bytes_if_range)
+        return await self._api.open_video(video, bytes_range, bytes_if_range)
 
 
 # noinspection PyMethodMayBeStatic
-def main_routes() -> web.RouteTableDef:
-    routes = web.RouteTableDef()
+def main_router():
+    router = APIRouter()
 
-    def get_base_uri(request: web.Request) -> str:
-        return str(request.url.origin()).rstrip("/")
+    @router.get("/")
+    async def index(request: Request) -> Response:
+        base_url = str(request.base_url).rstrip("/")
+        return Response(content=f"Use {base_url}/p?url=<Url> to parse any valid video posts url", status_code=status.HTTP_200_OK)
 
-    def get_query(request: web.Request, name: str, must_exists: bool = True, convert: Callable[[str], Any] = str) -> Any | None:
-        if name in request.query:
-            value = request.query[name]
-            try:
-                return convert(value)
-            except Exception as e:
-                raise web.HTTPBadRequest(reason=f"Query '{name}' parse error: {e}")
-        elif must_exists:
-            raise web.HTTPBadRequest(reason=f"Missing query '{name}'")
-        else:
-            return None
-
-    def get_header(request: web.Request, name: str, must_exists: bool = True) -> str | None:
-        if name in request.headers:
-            return request.headers[name]
-        elif must_exists:
-            raise web.HTTPBadRequest(reason=f"Missing header '{name}'")
-        else:
-            return None
-
-    @routes.get("/")
-    async def index(request: web.Request) -> web.Response:
-        base_uri = get_base_uri(request)
-        return web.Response(body=f"Use {base_uri}/p?url=<Url> to parse any valid video posts url", status=HTTPStatus.OK)
-
-    @routes.get(path="/p")
-    async def parser(request: web.Request) -> web.Response:
-        base_uri = get_base_uri(request)
-        url = get_query(request, "url")
+    @router.get("/p")
+    async def parser(request: Request, url: str) -> dict:
+        anime = await Anime1Server.instance()
         try:
-            anime = await Anime1Server.instance()
-            result = await anime.parse_url(base_uri, url)
-            return web.json_response(result)
+            base_uri = str(request.base_url).rstrip("/")
+            return await anime.parse_url(base_uri, url)
         except aiohttp.ClientResponseError as e:
-            return web.Response(status=e.status, reason=e.message)
+            raise HTTPException(e.status, detail=e.message)
         except aiohttp.ClientConnectorError as e:
-            raise web.HTTPServiceUnavailable(reason=e.strerror)
-        except Exception as e:
-            raise web.HTTPInternalServerError(reason=str(e))
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-    @routes.get("/c/{category_id}")
-    async def category(request: web.Request) -> web.Response:
-        base_uri = get_base_uri(request)
-        category_id = request.match_info["category_id"]
-        playlist: str | None = get_query(request, "playlist", must_exists=False)
+    @router.get("/c/{category_id}")
+    async def category(request: Request, category_id: str, playlist: str | None = None) -> Response:
+        anime = await Anime1Server.instance()
         try:
-            anime = await Anime1Server.instance()
-            result = await anime.get_category_playlist(base_uri, category_id, playlist)
-            if playlist is None:
-                return web.json_response(result.content)
-            else:
-                return web.json_response(
-                    data=result.content,
-                    headers={
-                        "Content-Disposition": f"attachment; filename=\"{parse.quote(result.file_name)}\""
-                    } if playlist is not None else None,
-                    content_type=result.content_type
-                )
+            base_uri = str(request.base_url).rstrip("/")
+            playlist_info = await anime.get_category_playlist(base_uri, category_id, playlist)
+            return Response(
+                content=playlist_info.content,
+                headers={
+                    "Content-Disposition": f"attachment; filename=\"{parse.quote(playlist_info.file_name)}\""
+                } if playlist is not None else None,
+                media_type=playlist_info.content_type
+            )
         except aiohttp.ClientResponseError as e:
-            return web.Response(status=e.status, reason=e.message)
+            raise HTTPException(e.status, detail=e.message)
         except aiohttp.ClientConnectorError as e:
-            raise web.HTTPServiceUnavailable(reason=e.strerror)
-        except Exception as e:
-            raise web.HTTPInternalServerError(reason=str(e))
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-    @routes.get("/v/{post_id}")
-    async def video(request: web.Request) -> web.StreamResponse:
-        post_id = request.match_info["post_id"]
-        header_range: str | None = get_header(request, "range", must_exists=False)
-        header_if_range: str | None = get_header(request, "if_range", must_exists=False)
+    # noinspection PyShadowingBuiltins
+    @router.get("/v/{post_id}")
+    async def video(post_id: str, range: Annotated[str | None, Header()] = None, if_range: Annotated[str | None, Header()] = None) -> StreamingResponse:
+        anime = await Anime1Server.instance()
         try:
-            anime = await Anime1Server.instance()
-            async with await anime.open_video(post_id, header_range, header_if_range) as video_response:
-                headers = {
-                    k: video_response.headers[k]
-                    for k in ["Content-Length", "Content-Range", "Etag", "Last-Modified"]
-                    if k in video_response.headers
-                }
-                response = web.StreamResponse(status=HTTPStatus.PARTIAL_CONTENT, headers=headers)
-                response.content_type = video_response.content_type
-                await response.prepare(request)
-                async for chunk in video_response.content.iter_any():
-                    await response.write(chunk)
-            await response.write_eof()
-            return response
+            video_response = await anime.open_video(post_id, range, if_range)
+            headers = {
+                k: video_response.headers[k]
+                for k in ["Content-Length", "Content-Range", "Etag", "Last-Modified"]
+                if k in video_response.headers
+            }
+            tasks = BackgroundTasks()
+            tasks.add_task(video_response.wait_for_close)
+            return StreamingResponse(
+                content=video_response.content.iter_any(),
+                status_code=status.HTTP_206_PARTIAL_CONTENT,
+                headers=headers,
+                media_type=video_response.content_type,
+                background=tasks
+            )
         except aiohttp.ClientResponseError as e:
-            return web.Response(status=e.status, reason=e.message)
+            raise HTTPException(e.status, detail=e.message)
         except aiohttp.ClientConnectorError as e:
-            raise web.HTTPServiceUnavailable(reason=e.strerror)
-        except Exception as e:
-            raise web.HTTPInternalServerError(reason=str(e))
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.strerror)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-    return routes
-
-
-def setup_logger(logger: logging.Logger, name: str, log_dir: Optional[Path], debug: bool) -> logging.Logger:
-    if debug:
-        logger.setLevel(logging.DEBUG)
-        logger.addHandler(logging.StreamHandler())
-    if log_dir is not None:
-        log_dir.mkdir(parents=True, exist_ok=True)
-        logger.setLevel(logging.DEBUG)
-        logger.addHandler(logging.FileHandler(filename=log_dir.joinpath(f"{name}.log"), encoding="utf-8"))
-    return logger
+    return router
 
 
-def launch_server(host: str, port: int, log_dir: Optional[Path] = None, debug: bool = False):
-    web_logger = setup_logger(aiohttp.log.web_logger, "web", log_dir, debug)
-    app = web.Application(logger=web_logger)
-    app.add_routes(main_routes())
-    loop = asyncio.new_event_loop()
-    loop.set_debug(debug)
-    access_logger = setup_logger(aiohttp.log.access_logger, "access", log_dir, debug)
-    web.run_app(
+def build_file_log_config(log_dir: Path) -> dict:
+    log_dir.mkdir(parents=True, exist_ok=True)
+    config: dict = deepcopy(uvicorn.config.LOGGING_CONFIG)
+    for i in config["formatters"].values():
+        # noinspection SpellCheckingInspection
+        i["fmt"] = "[%(asctime)s] " + i["fmt"]
+        i["use_colors"] = False
+    for k, v in config["handlers"].items():
+        v["class"] = "logging.FileHandler"
+        v["filename"] = log_dir.joinpath(f"{k}.log")
+        v["encoding"] = "utf-8"
+        del v["stream"]
+    return config
+
+
+def build_server(host: str, port: int, log_dir: Optional[Path] = None) -> uvicorn.Server:
+    log_config = build_file_log_config(log_dir) if log_dir is not None else uvicorn.config.LOGGING_CONFIG
+    app = FastAPI(docs_url=None, redoc_url=None)
+    app.include_router(main_router())
+    uvicorn_config = uvicorn.Config(
         app=app,
         host=host,
         port=port,
-        access_log=access_logger,
-        loop=loop
+        server_header=False,
+        log_config=log_config
     )
+    return uvicorn.Server(config=uvicorn_config)
 
 
 if __name__ == "__main__":
-    try:
-        launch_server("127.0.0.1", 8520, None, True)
-    except KeyboardInterrupt:
-        pass
+    build_server("127.0.0.1", 8520, None).run()

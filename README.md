@@ -12,8 +12,6 @@ Watch anime in local video player
 
 - aiohttp
 - bs4
-- fastapi
-- uvicorn
 - xspf_lib
 
 **If you want to use system tray:**
