@@ -311,6 +311,15 @@ class Anime1Server:
         )
         return content.xml_string()
 
+    @staticmethod
+    def _build_players_uri(video_url: str) -> dict:
+        encoded_url = parse.quote(video_url)
+        return {
+            "potplayer": f"potplayer://{encoded_url}",
+            "iina": f"iina://weblink?url={encoded_url}&new_window=1",
+            "vlc": f"vlc://{encoded_url}"
+        }
+
     async def parse_url(self, base_uri: str, url: str) -> dict:
         if not self._api.is_valid_posts_url(url):
             raise ValueError("Invalid url")
@@ -319,28 +328,33 @@ class Anime1Server:
         if result is None:
             raise ValueError("Unknown url type")
         elif isinstance(result, VideoPost):
+            output_url = f"{base_uri}/v/{result.post_id}"
             return {
                 "type": "single",
                 "id": result.post_id,
                 "title": result.title,
                 "category": result.category_id,
-                "url": f"{base_uri}/v/{result.post_id}"
+                "url": output_url,
+                "players": self._build_players_uri(output_url)
             }
         elif isinstance(result, VideoCategory):
+            output_url = f"{base_uri}/c/{result.category_id}"
             return {
                 "type": "category",
                 "id": result.category_id,
                 "title": result.title,
-                "url": f"{base_uri}/c/{result.category_id}",
+                "url": output_url,
+                "players": self._build_players_uri(output_url),
                 "playlists": {
-                    i.name.lower(): f"{base_uri}/c/{result.category_id}?playlist={i.name.lower()}"
+                    i.name.lower(): f"{output_url}?playlist={i.name.lower()}"
                     for i in PlaylistType
                 },
                 "videos": [
                     {
                         "id": i.post_id,
                         "title": i.title,
-                        "url": f"{base_uri}/v/{i.post_id}"
+                        "url": f"{base_uri}/v/{i.post_id}",
+                        "players": self._build_players_uri(f"{base_uri}/v/{i.post_id}")
                     }
                     for i in result.posts
                 ]
