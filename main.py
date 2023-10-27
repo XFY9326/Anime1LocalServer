@@ -536,8 +536,12 @@ def setup_logger(logger: logging.Logger, name: str, log_dir: Optional[Path], deb
 
 
 def launch_server(host: str, port: int, log_dir: Optional[Path] = None, debug: bool = False):
+    async def on_response_prepare(_, response: web.StreamResponse):
+        del response.headers["Server"]
+
     web_logger = setup_logger(aiohttp.log.web_logger, "web", log_dir, debug)
     app = web.Application(logger=web_logger)
+    app.on_response_prepare.append(on_response_prepare)
     app.add_routes(main_routes())
     loop = asyncio.new_event_loop()
     loop.set_debug(debug)
