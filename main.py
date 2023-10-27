@@ -477,16 +477,13 @@ def main_routes() -> web.RouteTableDef:
         try:
             anime = await Anime1Server.instance()
             result = await anime.get_category_playlist(base_uri, category_id, playlist)
-            if playlist is None:
-                return web.json_response(result.content)
-            else:
-                return web.json_response(
-                    data=result.content,
-                    headers={
-                        "Content-Disposition": f"attachment; filename=\"{parse.quote(result.file_name)}\""
-                    } if playlist is not None else None,
-                    content_type=result.content_type
-                )
+            return web.Response(
+                body=result.content,
+                headers={
+                    "Content-Disposition": f"attachment; filename=\"{parse.quote(result.file_name)}\""
+                } if playlist is not None else None,
+                content_type=result.content_type
+            )
         except aiohttp.ClientResponseError as e:
             return web.Response(status=e.status, reason=e.message)
         except aiohttp.ClientConnectorError as e:
