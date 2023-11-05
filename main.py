@@ -7,7 +7,7 @@ import time
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from pathlib import Path
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, Mapping
 from urllib import parse
 
 import aiohttp
@@ -45,6 +45,14 @@ class Video:
     expire: int
 
 
+@dataclasses.dataclass(frozen=True)
+class RemoteVideo:
+    headers: Mapping[str, str]
+    content_type: str
+    stream: aiohttp.StreamReader
+    on_close: Callable[[], None]
+
+
 class Anime1API:
     _MAIN_HOST: str = "anime1.me"
     _MAIN_URL: str = f"https://{_MAIN_HOST}"
@@ -54,9 +62,16 @@ class Anime1API:
     _POST_ORDER_PATTERN: re.Pattern = re.compile(r".*?\[(\d+)]")
     _PROXY_EXPIRE_OFFSET_SECONDS: int = 5
 
-    def __init__(self):
-        self._cookies: aiohttp.CookieJar = aiohttp.CookieJar()
-        self._client: aiohttp.ClientSession = aiohttp.ClientSession(raise_for_status=True, cookie_jar=self._cookies)
+    def __init__(self) -> None:
+        self._client_cache: aiohttp.ClientSession | None = None
+
+    @property
+    def _client(self) -> aiohttp.ClientSession:
+        client = self._client_cache
+        if client is None:
+            client = aiohttp.ClientSession(trust_env=True, raise_for_status=True, cookie_jar=aiohttp.CookieJar())
+            self._client_cache = client
+        return client
 
     @staticmethod
     def _get_page_headers() -> dict[str, str]:
@@ -213,12 +228,20 @@ class Anime1API:
         post = await self.get_video_post(post_id)
         return await self.get_video(post) if post is not None else None
 
-    def open_video(self, video: Video, bytes_range: str | None, bytes_if_range: str | None):
+    async def open_video(self, video: Video, bytes_range: str | None, bytes_if_range: str | None) -> RemoteVideo:
         headers = self._get_video_headers(bytes_range, bytes_if_range)
-        return self._client.get(video.url, headers=headers)
+        response = await self._client.get(video.url, headers=headers)
+        headers = {
+            k: response.headers[k]
+            for k in ["Content-Length", "Content-Range", "Etag", "Last-Modified"]
+            if k in response.headers
+        }
+        return RemoteVideo(headers, response.content_type, response.content, response.close)
 
-    async def close(self):
-        await self._client.close()
+    async def close(self) -> None:
+        if self._client_cache is not None and not self._client_cache.closed:
+            await self._client_cache.close()
+        self._client_cache = None
 
 
 @enum.unique
@@ -239,18 +262,11 @@ class PlaylistInfo:
 
 
 class Anime1Server:
-    _INSTANCE: Optional['Anime1Server'] = None
     _CACHE_CLEAN_SIZE: int = 128
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._api = Anime1API()
         self._video_cache: dict[str, Video] = dict()
-
-    @staticmethod
-    async def instance() -> 'Anime1Server':
-        if Anime1Server._INSTANCE is None:
-            Anime1Server._INSTANCE = Anime1Server()
-        return Anime1Server._INSTANCE
 
     @staticmethod
     def _build_m3u8(base_uri: str, category: VideoCategory) -> str:
@@ -431,13 +447,16 @@ class Anime1Server:
                     del self._video_cache[k]
         return video
 
-    async def open_video(self, post_id: str, bytes_range: str | None, bytes_if_range: str | None):
+    async def open_video(self, post_id: str, bytes_range: str | None, bytes_if_range: str | None) -> RemoteVideo:
         video = await self._get_video(post_id)
-        return self._api.open_video(video, bytes_range, bytes_if_range)
+        return await self._api.open_video(video, bytes_range, bytes_if_range)
+
+    async def close(self) -> None:
+        await self._api.close()
 
 
 # noinspection PyMethodMayBeStatic
-def main_routes() -> web.RouteTableDef:
+def main_routes(anime1_server: Anime1Server) -> web.RouteTableDef:
     routes = web.RouteTableDef()
 
     def get_base_uri(request: web.Request) -> str:
@@ -473,8 +492,7 @@ def main_routes() -> web.RouteTableDef:
         base_uri = get_base_uri(request)
         url = get_query(request, "url")
         try:
-            anime = await Anime1Server.instance()
-            result = await anime.parse_url(base_uri, url)
+            result = await anime1_server.parse_url(base_uri, url)
             return web.json_response(result)
         except aiohttp.ClientResponseError as e:
             return web.Response(status=e.status, reason=e.message)
@@ -489,8 +507,7 @@ def main_routes() -> web.RouteTableDef:
         category_id = request.match_info["category_id"]
         playlist: str | None = get_query(request, "playlist", must_exists=False)
         try:
-            anime = await Anime1Server.instance()
-            result = await anime.get_category_playlist(base_uri, category_id, playlist)
+            result = await anime1_server.get_category_playlist(base_uri, category_id, playlist)
             return web.Response(
                 body=result.content,
                 headers={
@@ -510,19 +527,14 @@ def main_routes() -> web.RouteTableDef:
         post_id = request.match_info["post_id"]
         header_range: str | None = get_header(request, "range", must_exists=False)
         header_if_range: str | None = get_header(request, "if_range", must_exists=False)
+        remote_video: RemoteVideo | None = None
         try:
-            anime = await Anime1Server.instance()
-            async with await anime.open_video(post_id, header_range, header_if_range) as video_response:
-                headers = {
-                    k: video_response.headers[k]
-                    for k in ["Content-Length", "Content-Range", "Etag", "Last-Modified"]
-                    if k in video_response.headers
-                }
-                response = web.StreamResponse(status=HTTPStatus.PARTIAL_CONTENT, headers=headers)
-                response.content_type = video_response.content_type
-                await response.prepare(request)
-                async for chunk in video_response.content.iter_any():
-                    await response.write(chunk)
+            remote_video = await anime1_server.open_video(post_id, header_range, header_if_range)
+            response = web.StreamResponse(status=HTTPStatus.PARTIAL_CONTENT, headers=remote_video.headers)
+            response.content_type = remote_video.content_type
+            await response.prepare(request)
+            async for chunk in remote_video.stream.iter_any():
+                await response.write(chunk)
             await response.write_eof()
             return response
         except aiohttp.ClientResponseError as e:
@@ -531,37 +543,51 @@ def main_routes() -> web.RouteTableDef:
             raise web.HTTPServiceUnavailable(reason=e.strerror)
         except Exception as e:
             raise web.HTTPInternalServerError(reason=str(e))
+        finally:
+            # noinspection PyBroadException
+            try:
+                if remote_video is not None:
+                    remote_video.on_close()
+            except:
+                pass
 
     return routes
 
 
-def setup_logger(logger: logging.Logger, name: str, log_dir: Optional[Path], debug: bool) -> logging.Logger:
+def setup_logger(logger: logging.Logger, log_dir: Optional[Path], debug: bool) -> None:
     if debug:
         logger.setLevel(logging.DEBUG)
         logger.addHandler(logging.StreamHandler())
     if log_dir is not None:
         log_dir.mkdir(parents=True, exist_ok=True)
-        logger.setLevel(logging.DEBUG)
-        logger.addHandler(logging.FileHandler(filename=log_dir.joinpath(f"{name}.log"), encoding="utf-8"))
-    return logger
+        logger.setLevel(logging.DEBUG if debug else logging.INFO)
+        logger.addHandler(logging.FileHandler(filename=log_dir.joinpath(f"{logger.name}.log"), encoding="utf-8"))
 
 
-def launch_server(host: str, port: int, log_dir: Optional[Path] = None, debug: bool = False):
+def launch_server(host: str, port: int, log_dir: Optional[Path] = None, debug: bool = False) -> None:
+    anime1_server = Anime1Server()
+
     async def on_response_prepare(_, response: web.StreamResponse):
         del response.headers["Server"]
 
-    web_logger = setup_logger(aiohttp.log.web_logger, "web", log_dir, debug)
-    app = web.Application(logger=web_logger)
+    async def on_cleanup(_):
+        await anime1_server.close()
+
+    setup_logger(aiohttp.log.access_logger, log_dir, debug)
+    setup_logger(aiohttp.log.server_logger, log_dir, debug)
+    setup_logger(aiohttp.log.web_logger, log_dir, debug)
+
+    app = web.Application()
     app.on_response_prepare.append(on_response_prepare)
-    app.add_routes(main_routes())
+    app.on_cleanup.append(on_cleanup)
+    app.add_routes(main_routes(anime1_server))
     loop = asyncio.new_event_loop()
     loop.set_debug(debug)
-    access_logger = setup_logger(aiohttp.log.access_logger, "access", log_dir, debug)
     web.run_app(
         app=app,
         host=host,
         port=port,
-        access_log=access_logger,
+        access_log_format='%t \t %a "%r" %s',
         loop=loop
     )
 
