@@ -27,7 +27,7 @@ EXCLUDE_MODULES = {
     "linux": {"pystray._darwin", "pystray._win32", "pystray._dummy"}
 }
 EXCLUDE_WHITE_LIST_MODULES = {
-    "PIL": {"_version", "_binary", "_util", "Image", "ExifTags", "ImageMode", "TiffTags",
+    "PIL": {"_version", "_binary", "_util", "_imaging", "Image", "ExifTags", "ImageMode", "TiffTags",
             "ImageChops", "ImageFile", "ImagePalette", "ImageSequence", "GimpGradientFile", "GimpPaletteFile", "ImageColor", "PaletteFile",
             "PngImagePlugin", "IcoImagePlugin", "BmpImagePlugin"}
 }
