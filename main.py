@@ -87,6 +87,10 @@ class Anime1API:
             self._client_cache = client
         return client
 
+    # noinspection PyStatementEffect
+    async def preheat(self) -> None:
+        self._client.version
+
     @staticmethod
     def _get_page_headers() -> dict[str, str]:
         return {
@@ -397,6 +401,9 @@ class Anime1Server:
             "vlc": f"vlc://{encoded_url}"
         }
 
+    async def preheat(self) -> None:
+        await self._api.preheat()
+
     async def parse_url(self, base_uri: str, url: str) -> dict:
         if not self._api.is_valid_posts_url(url):
             raise ValueError("Invalid url")
@@ -694,6 +701,9 @@ def launch_server(host: str, port: int, log_dir: Optional[Path] = None, debug: b
     async def on_response_prepare(_, response: web.StreamResponse):
         del response.headers["Server"]
 
+    async def on_startup(_):
+        await anime1_server.preheat()
+
     async def on_cleanup(_):
         await anime1_server.close()
 
@@ -703,6 +713,7 @@ def launch_server(host: str, port: int, log_dir: Optional[Path] = None, debug: b
 
     app = web.Application()
     app.on_response_prepare.append(on_response_prepare)
+    app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
     app.add_routes(main_routes(anime1_server))
     web.run_app(
