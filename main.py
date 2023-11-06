@@ -37,6 +37,17 @@ class VideoCategory:
 
 
 @dataclasses.dataclass(frozen=True)
+class VideoCategoryPost:
+    category_id: str
+    title: str
+    status: str
+    year: str
+    season: str
+    caption: str | None
+    external_url: str | None
+
+
+@dataclasses.dataclass(frozen=True)
 class Video:
     url: str
     type: str
@@ -58,9 +69,11 @@ class Anime1API:
     _MAIN_HOST: str = "anime1.me"
     _MAIN_URL: str = f"https://{_MAIN_HOST}"
     _API_URL: str = f"https://v.{_MAIN_HOST}/api"
+    _VIDEO_CATEGORY_LIST_URL: str = "https://d1zquzjgwo9yb.cloudfront.net"
     _USER_AGENT: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
     _CATEGORY_ID_PATTERN: re.Pattern = re.compile(r"'categoryID':\s'(.*?)'")
     _POST_ORDER_PATTERN: re.Pattern = re.compile(r".*?\[(\d+)]")
+    _EXTERNAL_TITLE_URL_REGEX: re.Pattern = re.compile(r"<a href=\"(.*?)\">(.*?)</a>")
     _PROXY_EXPIRE_OFFSET_SECONDS: int = 5
 
     def __init__(self) -> None:
@@ -114,6 +127,19 @@ class Anime1API:
             if bytes_if_range is not None:
                 headers["If-Range"] = bytes_if_range
         return headers
+
+    @staticmethod
+    def _get_video_category_list_headers() -> dict[str, str]:
+        return {
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "Origin": Anime1API._MAIN_URL,
+            "Referer": Anime1API._MAIN_URL + "/",
+            "User-Agent": Anime1API._USER_AGENT,
+        }
 
     @staticmethod
     def _parse_video_posts(soup: BeautifulSoup) -> list[VideoPost]:
@@ -230,6 +256,31 @@ class Anime1API:
         post = await self.get_video_post(post_id)
         return await self.get_video(post) if post is not None else None
 
+    async def get_video_category_list(self) -> list[VideoCategoryPost]:
+        async with self._client.get(self._VIDEO_CATEGORY_LIST_URL, headers=self._get_video_category_list_headers()) as r:
+            result = []
+            for item in await r.json():
+                caption = item[5] if len(item[5]) > 0 else None
+                match = self._EXTERNAL_TITLE_URL_REGEX.match(item[1])
+                if match is None:
+                    title = item[1]
+                    external_url = None
+                else:
+                    title = match.group(2).strip()
+                    external_url = match.group(1).strip()
+                result.append(
+                    VideoCategoryPost(
+                        category_id=item[0],
+                        title=title,
+                        status=item[2],
+                        year=item[3],
+                        season=item[4],
+                        caption=caption,
+                        external_url=external_url
+                    )
+                )
+            return result
+
     async def open_video(self, video: Video, bytes_range: str | None, bytes_if_range: str | None) -> RemoteVideo:
         headers = self._get_video_headers(bytes_range, bytes_if_range)
         response = await self._client.get(video.url, headers=headers, ssl=False)
@@ -296,7 +347,7 @@ class Anime1Server:
         base_uri = base_uri.rstrip('/')
         for i, post in enumerate(category.posts):
             content += f"{i + 1}*title*{post.title}" + "\n"
-            content += f"{i + 1}*file*{base_uri}/v/{post.post_id}" + "\n"
+            content += f"{i + 1}*file*{base_uri}/v/{post.category_id}" + "\n"
         return content
 
     # noinspection SpellCheckingInspection
@@ -457,6 +508,25 @@ class Anime1Server:
                     del self._video_cache[k]
         return video
 
+    async def get_video_category_list(self, base_uri: str, show_external: bool = False) -> list[dict[str, any]]:
+        result = []
+        for i in await self._api.get_video_category_list():
+            if i.external_url is None or show_external:
+                item = {
+                    "id": i.category_id,
+                    "title": i.title,
+                    "status": i.status,
+                    "year": i.year,
+                    "season": i.season,
+                    "caption": i.caption
+                }
+                if i.external_url is None:
+                    item["url"] = f"{base_uri}/c/{i.category_id}"
+                else:
+                    item["external_url"] = i.external_url
+                result.append(item)
+        return result
+
     async def open_video(self, post_id: str, bytes_range: str | None, bytes_if_range: str | None) -> RemoteVideo:
         video = await self._get_video(post_id)
         return await self._api.open_video(video, bytes_range, bytes_if_range)
@@ -495,7 +565,41 @@ def main_routes(anime1_server: Anime1Server) -> web.RouteTableDef:
     @routes.get("/")
     async def index(request: web.Request) -> web.Response:
         base_uri = get_base_uri(request)
-        return web.Response(body=f"Use {base_uri}/p?url=<Url> to parse any valid video posts url", status=HTTPStatus.OK)
+        help_text = f"""Anime1 LocalServer Help:
+        
+            > {base_uri}
+            Home page (Show help)
+            
+            > {base_uri}/p?url=<Url>
+            Parse url to json detail
+            
+            > {base_uri}/l
+            List all recent video categories (No external videos by default)
+            If there are any 'ex' parameters ({base_uri}/l?ex=1), it will list all external videos
+            
+            > {base_uri}/c/<CategoryId>
+            Open category by category id (Response m3u8 playlist)
+            
+            > {base_uri}/c/<CategoryId>?playlist=m3u8
+            Download category by category id (Response m3u8 playlist)
+            
+            > {base_uri}/c/<CategoryId>?playlist=dpl
+            Download category by category id (Response PotPlayer dpl playlist)
+            
+            > {base_uri}/c/<CategoryId>?playlist=dpl_ext
+            Download category by category id (Response PotPlayer dpl external playlist which redirects to m3u8)
+            
+            > {base_uri}/c/<CategoryId>?playlist=xspf
+            Download category by category id (Response XSPF playlist for VLC, PotPlayer etc.)
+            
+            > {base_uri}/c/<CategoryId>?playlist=xspf_ext
+            Download category by category id (Response XSPF playlist which redirects to m3u8)
+            
+            > {base_uri}/v/<PostId>
+            Open video by post id (Response video stream)
+        """
+        help_text = "\n".join(line.strip() for line in help_text.split("\n"))
+        return web.Response(body=help_text, status=HTTPStatus.OK)
 
     @routes.get(path="/p")
     async def parser(request: web.Request) -> web.Response:
@@ -503,6 +607,18 @@ def main_routes(anime1_server: Anime1Server) -> web.RouteTableDef:
         url = get_query(request, "url")
         try:
             result = await anime1_server.parse_url(base_uri, url)
+            return web.json_response(result)
+        except aiohttp.ClientResponseError as e:
+            return web.Response(status=e.status, reason=e.message)
+        except aiohttp.ClientConnectorError as e:
+            raise web.HTTPServiceUnavailable(reason=e.strerror)
+
+    @routes.get(path="/l")
+    async def parser(request: web.Request) -> web.Response:
+        base_uri = get_base_uri(request)
+        show_external = get_query(request, "ex", must_exists=False) is not None
+        try:
+            result = await anime1_server.get_video_category_list(base_uri, show_external)
             return web.json_response(result)
         except aiohttp.ClientResponseError as e:
             return web.Response(status=e.status, reason=e.message)

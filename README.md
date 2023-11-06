@@ -1,4 +1,4 @@
-# Anime1LocalServer
+# Anime1 LocalServer
 
 Local video server for anime1
 
@@ -62,9 +62,12 @@ You will find single executable file under `./build` folder
 ## Url methods
 
 - `http://127.0.0.1:8520`  
-  Home page (Useless)
+  Home page (Show help)
 - `http://127.0.0.1:8520/p?url=<Url>`  
   Parse url to json detail
+- `http://127.0.0.1:8520/l`  
+  List all recent video categories (No external videos by default)  
+  If there are any `ex` parameters (`http://127.0.0.1:8520/l?ex=1`), it will list all external videos
 - `http://127.0.0.1:8520/c/<CategoryId>`  
   Open category by category id (Response m3u8 playlist)
 - `http://127.0.0.1:8520/c/<CategoryId>?playlist=m3u8`  
@@ -81,6 +84,12 @@ You will find single executable file under `./build` folder
   Open video by post id (Response video stream)
 
 ## Example
+
+List all video categories without external videos
+
+```text
+http://127.0.0.1:8520/l
+```
 
 List all videos under this category
 
