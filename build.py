@@ -50,31 +50,30 @@ if __name__ == "__main__":
         NO_IMPORT_MODULES.extend(sub_module_names - {f"{module_name}.{i}" for i in keep_sub_module_names})
 
     # noinspection SpellCheckingInspection
-    commands = [
-        "nuitka",
+    args = [
         "--disable-console",
         "--remove-output",
         "--onefile",
         "--follow-imports",
-        f"--nofollow-import-to=\"{','.join(NO_IMPORT_MODULES)}\"",
+        f"--nofollow-import-to={','.join(NO_IMPORT_MODULES)}",
         "--assume-yes-for-downloads",
-        f"--output-dir=\"{BUILD_DIR}\"",
-        f"--output-filename=\"{PRODUCT_NAME}_{VERSION}\"",
-        f"--product-name=\"{PRODUCT_NAME}\"",
-        f"--file-description=\"{PRODUCT_NAME}\"",
-        f"--file-version=\"{VERSION}\"",
-        f"--product-version=\"{VERSION}\"",
-        f"--company-name=\"{AUTHOR}\"",
-        f"--copyright=\"© {AUTHOR}. All rights reserved.\"",
-        "--onefile-tempdir-spec=\"%TEMP%/%PRODUCT%/%VERSION%\""
+        f"--output-dir={BUILD_DIR}",
+        f"--output-filename={PRODUCT_NAME}_{VERSION}",
+        f"--product-name={PRODUCT_NAME}",
+        f"--file-description={PRODUCT_NAME}",
+        f"--file-version={VERSION}",
+        f"--product-version={VERSION}",
+        f"--company-name={AUTHOR}",
+        f"--copyright=© {AUTHOR}. All rights reserved.",
+        "--onefile-tempdir-spec=%TEMP%/%PRODUCT%/%VERSION%"
     ]
     if platform.system() == "Windows":
-        commands.append(f"--windows-icon-from-ico=\"{ICON_PATH}\"")
+        args.append(f"--windows-icon-from-ico={ICON_PATH}")
     elif platform.system() == "Darwin":
-        commands.append(f"--macos-app-icon=\"{ICON_PATH}\"")
+        args.append(f"--macos-app-icon={ICON_PATH}")
     elif platform.system() == "Linux":
-        commands.append(f"--linux-icon=\"{ICON_PATH}\"")
+        args.append(f"--linux-icon={ICON_PATH}")
     for k, v in RESOURCES_MAP.items():
-        commands.append(f"--include-data-files=\"{k}={v}\"")
-    commands.append(str(MAIN_ENTRY))
-    subprocess.call(f"{sys.executable} -m " + " ".join(commands))
+        args.append(f"--include-data-files={k}={v}")
+    args.append(MAIN_ENTRY)
+    subprocess.call([sys.executable, "-m", "nuitka"] + [str(i) for i in args])
