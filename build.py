@@ -70,6 +70,7 @@ if __name__ == "__main__":
     if platform.system() == "Windows":
         args.append(f"--windows-icon-from-ico={ICON_PATH}")
     elif platform.system() == "Darwin":
+        args.append("--macos-create-app-bundle")
         args.append(f"--macos-app-icon={ICON_PATH}")
     elif platform.system() == "Linux":
         args.append(f"--linux-icon={ICON_PATH}")
