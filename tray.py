@@ -9,7 +9,7 @@ from queue import Queue
 import pystray
 from PIL.Image import open as open_image
 
-from main import launch_server
+from main import create_app, run_app
 
 PRODUCT_NAME = "Anime1-LocalServer"
 
@@ -20,10 +20,11 @@ ICON_PATH = BASE_DIR.joinpath("assets", "icon.png")
 HOST = "127.0.0.1"
 PORT = 8520
 DEBUG = False
+USING_PROXY = False
 
 
 class MsgType(enum.Enum):
-    EXIT = enum.auto()
+    STOP_QUEUE = enum.auto()
     ERROR_EXIT = enum.auto()
     NOTIFY = enum.auto()
 
@@ -44,15 +45,17 @@ def main():
         i.visible = True
         while True:
             msg: Msg = notify_queue.get()
-            if msg.type == MsgType.EXIT:
-                return
-            elif msg.type == MsgType.ERROR_EXIT:
-                i.remove_notification()
-                i.notify(msg.content, PRODUCT_NAME)
-                on_exit(True)
-                return
-            else:
-                i.notify(msg.content, PRODUCT_NAME)
+            match msg.type:
+                case MsgType.NOTIFY:
+                    if msg.content is not None:
+                        i.notify(msg.content, PRODUCT_NAME)
+                case MsgType.ERROR_EXIT:
+                    i.remove_notification()
+                    if msg.content is not None:
+                        i.notify(msg.content, PRODUCT_NAME)
+                    on_exit()
+                case MsgType.STOP_QUEUE:
+                    break
 
     def on_open():
         webbrowser.open(server_url)
@@ -60,10 +63,9 @@ def main():
     def on_logs():
         os.startfile(LOG_DIR)
 
-    def on_exit(error_exit: bool):
-        if not error_exit:
-            notify_queue.put(Msg(MsgType.EXIT))
-            signal.raise_signal(signal.SIGINT)
+    def on_exit():
+        notify_queue.put(Msg(MsgType.STOP_QUEUE))
+        signal.raise_signal(signal.SIGINT)
         if stray is not None:
             stray.stop()
         icon.close()
@@ -72,14 +74,15 @@ def main():
         pystray.MenuItem("Open", on_open, default=True),
         pystray.MenuItem("Logs", on_logs),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Exit", lambda: on_exit(False))
+        pystray.MenuItem("Exit", on_exit)
     )
     stray = pystray.Icon(PRODUCT_NAME, icon, PRODUCT_NAME, menu)
     stray.run_detached(on_setup)
 
     try:
         notify_queue.put(Msg(MsgType.NOTIFY, f"Start running: {server_url}"))
-        launch_server(HOST, PORT, LOG_DIR, DEBUG)
+        app = create_app(LOG_DIR, DEBUG, USING_PROXY)
+        run_app(app, HOST, PORT)
     except KeyboardInterrupt:
         pass
     except Exception as e:

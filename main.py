@@ -76,14 +76,15 @@ class Anime1API:
     _EXTERNAL_TITLE_URL_REGEX: re.Pattern = re.compile(r"<a href=\"(.*?)\">(.*?)</a>")
     _PROXY_EXPIRE_OFFSET_SECONDS: int = 5
 
-    def __init__(self) -> None:
+    def __init__(self, using_proxy: bool = False) -> None:
+        self._using_proxy: bool = using_proxy
         self._client_cache: aiohttp.ClientSession | None = None
 
     @property
     def _client(self) -> aiohttp.ClientSession:
         client = self._client_cache
         if client is None:
-            client = aiohttp.ClientSession(trust_env=True, raise_for_status=True, cookie_jar=aiohttp.CookieJar())
+            client = aiohttp.ClientSession(trust_env=self._using_proxy, raise_for_status=True, cookie_jar=aiohttp.CookieJar())
             self._client_cache = client
         return client
 
@@ -329,8 +330,8 @@ class PlaylistInfo:
 class Anime1Server:
     _CACHE_CLEAN_SIZE: int = 128
 
-    def __init__(self) -> None:
-        self._api = Anime1API()
+    def __init__(self, using_proxy: bool = False) -> None:
+        self._api = Anime1API(using_proxy)
         self._video_cache: dict[str, Video] = dict()
 
     @staticmethod
@@ -542,8 +543,7 @@ class Anime1Server:
         await self._api.close()
 
 
-# noinspection PyMethodMayBeStatic
-def main_routes(anime1_server: Anime1Server) -> web.RouteTableDef:
+def _main_routes(anime1_server: Anime1Server) -> web.RouteTableDef:
     routes = web.RouteTableDef()
 
     def get_base_uri(request: web.Request) -> str:
@@ -685,7 +685,7 @@ def main_routes(anime1_server: Anime1Server) -> web.RouteTableDef:
     return routes
 
 
-def setup_logger(logger: logging.Logger, log_dir: Optional[Path], debug: bool) -> None:
+def _setup_logger(logger: logging.Logger, log_dir: Optional[Path], debug: bool) -> None:
     if debug:
         logger.setLevel(logging.DEBUG)
         logger.addHandler(logging.StreamHandler())
@@ -695,8 +695,8 @@ def setup_logger(logger: logging.Logger, log_dir: Optional[Path], debug: bool) -
         logger.addHandler(logging.FileHandler(filename=log_dir.joinpath(f"{logger.name}.log"), encoding="utf-8"))
 
 
-def launch_server(host: str, port: int, log_dir: Optional[Path] = None, debug: bool = False) -> None:
-    anime1_server = Anime1Server()
+def create_app(log_dir: Optional[Path] = None, debug: bool = False, using_proxy: bool = False) -> web.Application:
+    anime1_server = Anime1Server(using_proxy)
 
     async def on_response_prepare(_, response: web.StreamResponse):
         del response.headers["Server"]
@@ -707,15 +707,20 @@ def launch_server(host: str, port: int, log_dir: Optional[Path] = None, debug: b
     async def on_cleanup(_):
         await anime1_server.close()
 
-    setup_logger(aiohttp.log.access_logger, log_dir, debug)
-    setup_logger(aiohttp.log.server_logger, log_dir, debug)
-    setup_logger(aiohttp.log.web_logger, log_dir, debug)
+    _setup_logger(aiohttp.log.access_logger, log_dir, debug)
+    _setup_logger(aiohttp.log.server_logger, log_dir, debug)
+    _setup_logger(aiohttp.log.web_logger, log_dir, debug)
 
     app = web.Application()
     app.on_response_prepare.append(on_response_prepare)
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
-    app.add_routes(main_routes(anime1_server))
+    app.add_routes(_main_routes(anime1_server))
+
+    return app
+
+
+def run_app(app: web.Application, host: str, port: int) -> None:
     web.run_app(
         app=app,
         host=host,
@@ -726,6 +731,6 @@ def launch_server(host: str, port: int, log_dir: Optional[Path] = None, debug: b
 
 if __name__ == "__main__":
     try:
-        launch_server("127.0.0.1", 8520, None, True)
+        run_app(create_app(None, True, False), "127.0.0.1", 8520)
     except KeyboardInterrupt:
         pass
