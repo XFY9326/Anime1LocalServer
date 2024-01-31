@@ -1,3 +1,0 @@
-pystray
-nuitka
-imageio

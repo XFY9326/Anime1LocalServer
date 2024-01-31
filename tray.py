@@ -1,15 +1,16 @@
 import dataclasses
 import enum
 import os.path
-import signal
+import threading
 import webbrowser
 from pathlib import Path
 from queue import Queue
 
 import pystray
+from PIL import Image
 from PIL.Image import open as open_image
 
-from main import create_app, run_app
+from main import Anime1WebApp
 
 PRODUCT_NAME = "Anime1-LocalServer"
 
@@ -20,7 +21,7 @@ ICON_PATH = BASE_DIR.joinpath("assets", "icon.png")
 HOST = "127.0.0.1"
 PORT = 8520
 DEBUG = False
-USING_PROXY = False
+USING_PROXY = True
 
 
 class MsgType(enum.Enum):
@@ -35,13 +36,25 @@ class Msg:
     content: str | None = None
 
 
-def main():
+def main() -> None:
     stray: pystray.Icon | None = None
-    notify_queue = Queue()
-    server_url = f"http://{HOST}:{PORT}"
-    icon = open_image(ICON_PATH)
+    notify_queue: Queue = Queue()
+    # noinspection HttpUrlsUsage
+    server_url: str = f"http://{HOST}:{PORT}"
+    icon: Image = open_image(ICON_PATH)
+    app: Anime1WebApp = Anime1WebApp(LOG_DIR, DEBUG, USING_PROXY)
 
-    def on_setup(i: pystray.Icon):
+    def launch_web_app() -> None:
+        nonlocal app
+        try:
+            notify_queue.put(Msg(MsgType.NOTIFY, f"Start running: {server_url}"))
+            app.run(HOST, PORT)
+        except KeyboardInterrupt:
+            pass
+        except Exception as e:
+            notify_queue.put(Msg(MsgType.ERROR_EXIT, f"Error: {e}"))
+
+    def on_setup(i: pystray.Icon) -> None:
         i.visible = True
         while True:
             msg: Msg = notify_queue.get()
@@ -57,36 +70,40 @@ def main():
                 case MsgType.STOP_QUEUE:
                     break
 
-    def on_open():
+    def on_open() -> None:
         webbrowser.open(server_url)
 
-    def on_logs():
+    def on_logs() -> None:
         os.startfile(LOG_DIR)
 
-    def on_exit():
+    def on_reset_proxy_connection() -> None:
+        app.reset_proxy_connection()
+        notify_queue.put(Msg(MsgType.NOTIFY, "Proxy connection resettled"))
+
+    def on_restart_server() -> None:
+        threading.Thread(target=app.restart).start()
+        notify_queue.put(Msg(MsgType.NOTIFY, "Server restarted"))
+
+    def on_exit() -> None:
         notify_queue.put(Msg(MsgType.STOP_QUEUE))
-        signal.raise_signal(signal.SIGINT)
+        app.stop()
         if stray is not None:
             stray.stop()
         icon.close()
 
     menu = (
         pystray.MenuItem("Open", on_open, default=True),
-        pystray.MenuItem("Logs", on_logs),
+        pystray.MenuItem("Open logs", on_logs),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Restart server", on_restart_server),
+        pystray.MenuItem("Reset connection", on_reset_proxy_connection),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Exit", on_exit)
     )
     stray = pystray.Icon(PRODUCT_NAME, icon, PRODUCT_NAME, menu)
-    stray.run_detached(on_setup)
 
-    try:
-        notify_queue.put(Msg(MsgType.NOTIFY, f"Start running: {server_url}"))
-        app = create_app(LOG_DIR, DEBUG, USING_PROXY)
-        run_app(app, HOST, PORT)
-    except KeyboardInterrupt:
-        pass
-    except Exception as e:
-        notify_queue.put(Msg(MsgType.ERROR_EXIT, f"Error: {e}"))
+    threading.Thread(target=launch_web_app).start()
+    stray.run(on_setup)
 
 
 if __name__ == "__main__":
