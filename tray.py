@@ -1,6 +1,6 @@
 import dataclasses
 import enum
-import os.path
+import os
 import threading
 import webbrowser
 from pathlib import Path
@@ -21,7 +21,7 @@ ICON_PATH = BASE_DIR.joinpath("assets", "icon.png")
 HOST = "127.0.0.1"
 PORT = 8520
 DEBUG = False
-USING_PROXY = True
+USING_PROXY = False
 
 
 class MsgType(enum.Enum):
@@ -43,16 +43,6 @@ def main() -> None:
     server_url: str = f"http://{HOST}:{PORT}"
     icon: Image = open_image(ICON_PATH)
     app: Anime1WebApp = Anime1WebApp(LOG_DIR, DEBUG, USING_PROXY)
-
-    def launch_web_app() -> None:
-        nonlocal app
-        try:
-            notify_queue.put(Msg(MsgType.NOTIFY, f"Start running: {server_url}"))
-            app.run(HOST, PORT)
-        except KeyboardInterrupt:
-            pass
-        except Exception as e:
-            notify_queue.put(Msg(MsgType.ERROR_EXIT, f"Error: {e}"))
 
     def on_setup(i: pystray.Icon) -> None:
         i.visible = True
@@ -76,6 +66,9 @@ def main() -> None:
     def on_logs() -> None:
         os.startfile(LOG_DIR)
 
+    def on_system_proxy() -> None:
+        app.update_using_proxy(not app.using_proxy)
+
     def on_reset_proxy_connection() -> None:
         app.reset_proxy_connection()
         notify_queue.put(Msg(MsgType.NOTIFY, "Proxy connection resettled"))
@@ -92,15 +85,26 @@ def main() -> None:
         icon.close()
 
     menu = (
-        pystray.MenuItem("Open", on_open, default=True),
-        pystray.MenuItem("Open logs", on_logs),
+        pystray.MenuItem("Open browser", on_open, default=True),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Restart server", on_restart_server),
-        pystray.MenuItem("Reset connection", on_reset_proxy_connection),
+        pystray.MenuItem("Show logs", on_logs),
+        pystray.MenuItem("Using system proxy", on_system_proxy, lambda _: app.using_proxy),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Restart local server", on_restart_server),
+        pystray.MenuItem("Reset all connection", on_reset_proxy_connection),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Exit", on_exit)
     )
     stray = pystray.Icon(PRODUCT_NAME, icon, PRODUCT_NAME, menu)
+
+    def launch_web_app() -> None:
+        try:
+            notify_queue.put(Msg(MsgType.NOTIFY, f"Start running: {server_url}"))
+            app.run(HOST, PORT)
+        except KeyboardInterrupt:
+            on_exit()
+        except Exception as e:
+            notify_queue.put(Msg(MsgType.ERROR_EXIT, f"Error: {e}"))
 
     threading.Thread(target=launch_web_app).start()
     stray.run(on_setup)

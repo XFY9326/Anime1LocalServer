@@ -81,15 +81,28 @@ class Anime1API:
     def __init__(self, using_proxy: bool = False) -> None:
         self._using_proxy: bool = using_proxy
         self._client_cache: aiohttp.ClientSession | None = None
+        self._cookies: aiohttp.CookieJar = aiohttp.CookieJar()
 
     @property
     def _client(self) -> aiohttp.ClientSession:
         client = self._client_cache
         if client is None:
-            client = aiohttp.ClientSession(trust_env=self._using_proxy, raise_for_status=True,
-                                           cookie_jar=aiohttp.CookieJar())
+            client = aiohttp.ClientSession(trust_env=self._using_proxy, raise_for_status=True, cookie_jar=self._cookies)
             self._client_cache = client
         return client
+
+    @property
+    def using_proxy(self) -> bool:
+        client = self._client_cache
+        if client is None:
+            return self._using_proxy
+        else:
+            return client.trust_env
+
+    async def update_using_proxy(self, value: bool) -> None:
+        self._using_proxy = value
+        if self._client_cache is not None:
+            await self.close_client()
 
     # noinspection PyStatementEffect
     async def preheat(self) -> None:
@@ -411,6 +424,13 @@ class Anime1Server:
     async def preheat(self) -> None:
         await self._api.preheat()
 
+    @property
+    def using_proxy(self) -> bool:
+        return self._api.using_proxy
+
+    async def update_using_proxy(self, value: bool) -> None:
+        await self._api.update_using_proxy(value)
+
     async def parse_url(self, base_uri: str, url: str) -> dict:
         if not self._api.is_valid_posts_url(url):
             raise ValueError("Invalid url")
@@ -557,6 +577,16 @@ class Anime1WebApp:
         self._debug: bool = debug
         self._loop: asyncio.AbstractEventLoop | None = None
         self._anime1_server: Anime1Server = Anime1Server(using_proxy)
+
+    @property
+    def using_proxy(self) -> bool:
+        return self._anime1_server.using_proxy
+
+    def update_using_proxy(self, value: bool) -> None:
+        if self._loop is not None and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._anime1_server.update_using_proxy(value), self._loop)
+        else:
+            raise RuntimeError("Anime1WebApp is not running")
 
     def _create_web_app(self, anime1_server: Anime1Server, log_dir: Optional[Path], debug: bool) -> web.Application:
         async def on_response_prepare(_, response: web.StreamResponse):
