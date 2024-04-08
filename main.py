@@ -1,9 +1,11 @@
 import asyncio
 import dataclasses
 import enum
+import locale
 import logging
 import re
 import time
+from functools import cmp_to_key
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from pathlib import Path
@@ -22,7 +24,8 @@ from bs4 import BeautifulSoup
 class VideoPost:
     post_id: str
     title: str
-    order: int | None
+    episode: str | None
+    episode_num: int | None
     datetime: str
     category_id: str
     video_id: str
@@ -74,7 +77,7 @@ class Anime1API:
     _VIDEO_CATEGORY_LIST_URL: str = "https://d1zquzjgwo9yb.cloudfront.net"
     _USER_AGENT: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
     _CATEGORY_ID_PATTERN: re.Pattern = re.compile(r"'categoryID':\s'(.*?)'")
-    _POST_ORDER_PATTERN: re.Pattern = re.compile(r".*?\[(\d+)]")
+    _POST_EPISODE_PATTERN: re.Pattern = re.compile(r".*?\[(.*?)]")
     _EXTERNAL_TITLE_URL_REGEX: re.Pattern = re.compile(r"<a href=\"(.*?)\">(.*?)</a>")
     _PROXY_EXPIRE_OFFSET_SECONDS: int = 5
 
@@ -164,9 +167,28 @@ class Anime1API:
 
     @staticmethod
     def _parse_video_posts(soup: BeautifulSoup) -> list[VideoPost]:
+        def _sort_video_post(p1: VideoPost, p2: VideoPost) -> int:
+            t1, t2 = p1.episode, p2.episode
+            n1, n2 = p1.episode_num, p2.episode_num
+            if n1 is None and n2 is not None:
+                return 1
+            elif n1 is not None and n2 is None:
+                return -1
+            elif n1 is not None and n2 is not None:
+                return n1 - n2
+            elif t1 is None and t2 is not None:
+                return 1
+            elif t1 is not None and t2 is None:
+                return -1
+            elif t1 is None and t2 is None:
+                return 0
+            elif t1 == t2:
+                return 0
+            else:
+                return locale.strcoll(t1, t2)
+
         articles = soup.find_all("article", id=True)
         posts: list[VideoPost] = list()
-        all_has_order = True
         for article in articles:
             header_element = article.find("header")
             content_element = article.find("div", attrs={"class": "entry-content"})
@@ -176,15 +198,14 @@ class Anime1API:
             next_post_element = content_element_p.find("a", string="下一集")
 
             post_title = header_element.find("h2").text
-            order_match = Anime1API._POST_ORDER_PATTERN.match(post_title)
-            order = int(order_match.group(1)) if order_match is not None else None
-            if order is None:
-                all_has_order = False
+            episode_match = Anime1API._POST_EPISODE_PATTERN.match(post_title)
+            episode = str(episode_match.group(1)).strip() if episode_match is not None else None
 
             post = VideoPost(
                 post_id=article["id"].split("-")[1],
                 title=post_title,
-                order=order,
+                episode=episode,
+                episode_num=int(episode) if episode is not None and episode.isdigit() else None,
                 datetime=header_element.find("time")["datetime"],
                 category_id=all_posts_element["href"].split("=")[1],
                 video_id=video_element["data-vid"],
@@ -193,10 +214,10 @@ class Anime1API:
                 next_post_id=next_post_element["href"].split("=")[1] if next_post_element is not None else None
             )
             posts.append(post)
-        if all_has_order:
-            posts.sort(key=lambda i: i.order)
-        else:
+        if all(i.episode is None for i in posts):
             posts.reverse()
+        else:
+            posts.sort(key=cmp_to_key(_sort_video_post))
         return posts
 
     @staticmethod

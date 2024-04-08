@@ -9,7 +9,7 @@ BASE_DIR = Path(os.path.dirname(os.path.realpath(__file__)))
 
 PRODUCT_NAME = "Anime1-LocalServer"
 AUTHOR = "XFY9326"
-VERSION = "0.0.0.6"
+VERSION = "0.0.0.7"
 BUILD_DIR = "build"
 MAIN_ENTRY = BASE_DIR.joinpath("tray.py")
 ICON_PATH = BASE_DIR.joinpath("assets", "icon.png")
@@ -43,7 +43,6 @@ if __name__ == "__main__":
         "--disable-console",
         "--remove-output",
         "--onefile",
-        "--follow-imports",
         f"--nofollow-import-to={','.join(NO_IMPORT_MODULES)}",
         "--assume-yes-for-downloads",
         f"--output-dir={BUILD_DIR}",
