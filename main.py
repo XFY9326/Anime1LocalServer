@@ -75,7 +75,7 @@ class Anime1API:
     _MAIN_URL: str = f"https://{_MAIN_HOST}"
     _API_URL: str = f"https://v.{_MAIN_HOST}/api"
     _VIDEO_CATEGORY_LIST_URL: str = "https://d1zquzjgwo9yb.cloudfront.net"
-    _USER_AGENT: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
+    _USER_AGENT: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0"
     _CATEGORY_ID_PATTERN: re.Pattern = re.compile(r"'categoryID':\s'(.*?)'")
     _POST_EPISODE_PATTERN: re.Pattern = re.compile(r".*?\[(.*?)]")
     _EXTERNAL_TITLE_URL_REGEX: re.Pattern = re.compile(r"<a href=\"(.*?)\">(.*?)</a>")
@@ -84,13 +84,16 @@ class Anime1API:
     def __init__(self, using_proxy: bool = False) -> None:
         self._using_proxy: bool = using_proxy
         self._client_cache: aiohttp.ClientSession | None = None
-        self._cookies: aiohttp.CookieJar = aiohttp.CookieJar()
 
     @property
     def _client(self) -> aiohttp.ClientSession:
         client = self._client_cache
         if client is None:
-            client = aiohttp.ClientSession(trust_env=self._using_proxy, raise_for_status=True, cookie_jar=self._cookies)
+            client = aiohttp.ClientSession(
+                trust_env=self._using_proxy,
+                raise_for_status=True,
+                cookie_jar=aiohttp.CookieJar()
+            )
             self._client_cache = client
         return client
 
@@ -759,14 +762,12 @@ class Anime1WebApp:
                     raise web.HTTPServiceUnavailable(reason=e.strerror)
                 response = web.StreamResponse(status=remote_video.status, headers=remote_video.headers)
                 response.content_type = remote_video.content_type
-                try:
-                    await response.prepare(request)
-                    async for chunk in remote_video.stream.iter_any():
-                        chunk: bytes
-                        await response.write(chunk)
-                    await response.write_eof()
-                except ConnectionResetError:
-                    pass
+                await response.prepare(request)
+                async for chunk in remote_video.stream.iter_any():
+                    chunk: bytes
+                    await response.write(chunk)
+                    await asyncio.sleep(0.001)
+                await response.write_eof()
                 return response
             finally:
                 # noinspection PyBroadException
@@ -789,7 +790,7 @@ class Anime1WebApp:
             logger.addHandler(logging.FileHandler(filename=log_dir.joinpath(f"{logger.name}.log"), encoding="utf-8"))
 
     def _run_web_app_forever(self, host: str, port: int) -> None:
-        self._loop = asyncio.new_event_loop()
+        self._loop = asyncio.get_event_loop()
         app = self._create_web_app(self._anime1_server, self._log_dir, self._debug)
         web.run_app(
             app=app,
@@ -840,6 +841,6 @@ class Anime1WebApp:
 
 if __name__ == "__main__":
     try:
-        Anime1WebApp(None, True, True).run("127.0.0.1", 8520)
+        Anime1WebApp(None, True, False).run("127.0.0.1", 8520)
     except KeyboardInterrupt:
         pass

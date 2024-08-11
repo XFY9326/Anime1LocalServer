@@ -9,7 +9,7 @@ BASE_DIR = Path(os.path.dirname(os.path.realpath(__file__)))
 
 PRODUCT_NAME = "Anime1-LocalServer"
 AUTHOR = "XFY9326"
-VERSION = "0.0.0.7"
+VERSION = "0.0.0.8"
 BUILD_DIR = "build"
 MAIN_ENTRY = BASE_DIR.joinpath("tray.py")
 ICON_PATH = BASE_DIR.joinpath("assets", "icon.png")
@@ -40,7 +40,6 @@ if __name__ == "__main__":
 
     # noinspection SpellCheckingInspection
     args = [
-        "--disable-console",
         "--remove-output",
         "--onefile",
         f"--nofollow-import-to={','.join(NO_IMPORT_MODULES)}",
@@ -56,6 +55,7 @@ if __name__ == "__main__":
         "--onefile-tempdir-spec={TEMP}/{PRODUCT}/{VERSION}"
     ]
     if platform.system() == "Windows":
+        args.append("--windows-console-mode=disable")
         args.append(f"--windows-icon-from-ico={ICON_PATH}")
     elif platform.system() == "Darwin":
         args.append("--macos-create-app-bundle")

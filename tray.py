@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 import enum
 import os
@@ -98,6 +99,7 @@ def main() -> None:
     stray = pystray.Icon(PRODUCT_NAME, icon, PRODUCT_NAME, menu)
 
     def launch_web_app() -> None:
+        asyncio.set_event_loop(asyncio.new_event_loop())
         try:
             notify_queue.put(Msg(MsgType.NOTIFY, f"Start running: {server_url}"))
             app.run(HOST, PORT)
