@@ -5,6 +5,7 @@ import locale
 import logging
 import re
 import time
+from contextlib import suppress
 from functools import cmp_to_key
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -68,7 +69,7 @@ class RemoteVideo:
     headers: Mapping[str, str]
     content_type: str
     stream: aiohttp.StreamReader
-    wait_for_close: Callable[[], Coroutine[Any, Any, None]]
+    close: Callable[[], Coroutine[Any, Any, None]]
 
 
 class Anime1API:
@@ -76,7 +77,7 @@ class Anime1API:
     _MAIN_URL: str = f"https://{_MAIN_HOST}"
     _API_URL: str = f"https://v.{_MAIN_HOST}/api"
     _VIDEO_CATEGORY_LIST_URL: str = "https://d1zquzjgwo9yb.cloudfront.net"
-    _USER_AGENT: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0"
+    _USER_AGENT: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0"
     _CATEGORY_ID_PATTERN: re.Pattern = re.compile(r"'categoryID':\s'(.*?)'")
     _POST_EPISODE_PATTERN: re.Pattern = re.compile(r".*?\[(.*?)]")
     _EXTERNAL_TITLE_URL_REGEX: re.Pattern = re.compile(r"<a href=\"(.*?)\">(.*?)</a>")
@@ -124,6 +125,7 @@ class Anime1API:
             "Cache-Control": "max-age=0",
             "Referer": Anime1API._MAIN_URL + "/",
             "User-Agent": Anime1API._USER_AGENT,
+            "Pragma": "no-cache",
         }
 
     @staticmethod
@@ -148,10 +150,10 @@ class Anime1API:
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             "Referer": Anime1API._MAIN_URL + "/",
             "User-Agent": Anime1API._USER_AGENT,
+            "Pragma": "no-cache",
         }
         if bytes_range is not None:
             headers["Range"] = bytes_range
-            headers["Connection"] = "keep-alive"
             if bytes_if_range is not None:
                 headers["If-Range"] = bytes_if_range
         return headers
@@ -330,6 +332,10 @@ class Anime1API:
             return result
 
     async def open_video(self, video: Video, bytes_range: str | None, bytes_if_range: str | None) -> RemoteVideo:
+        async def _close(rsp: aiohttp.ClientResponse):
+            rsp.release()
+            await rsp.wait_for_close()
+
         headers = self._get_video_headers(bytes_range, bytes_if_range)
         response = await self._client.get(video.url, headers=headers, ssl=False)
         headers = {
@@ -338,6 +344,7 @@ class Anime1API:
             if k in response.headers
         }
         headers["X-Forwarded-For"] = video.url
+        headers["Access-Control-Allow-Origin"] = "*"
         return RemoteVideo(
             url=video.url,
             ok=response.ok,
@@ -345,7 +352,7 @@ class Anime1API:
             headers=headers,
             content_type=response.content_type,
             stream=response.content,
-            wait_for_close=response.wait_for_close
+            close=lambda: _close(response)
         )
 
     async def close_client(self) -> None:
@@ -789,7 +796,8 @@ class Anime1WebApp:
                 await response.write_eof()
                 return response
             finally:
-                await remote_video.wait_for_close()
+                with suppress(BaseException):
+                    await remote_video.close()
 
         return routes
 
