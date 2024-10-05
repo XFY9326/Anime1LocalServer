@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "Anime1-LocalServer"
+version = "0.0.0.9"
+description = "Local video server for anime1. Watch anime in local video player."
+authors = ["XFY9326"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+aiohttp = "^3.10.9"
+bs4 = "^0.0.2"
+xspf-lib = "^0.3.4"
+
+[tool.poetry.group.dev.dependencies]
+pillow = "^10.4.0"
+pystray = "^0.19.5"
+nuitka = "^2.4.8"
+imageio = "^2.35.1"
+toml = "^0.10.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

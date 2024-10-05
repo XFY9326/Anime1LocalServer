@@ -2,14 +2,16 @@ import os
 import platform
 import subprocess
 import sys
-from importlib.util import find_spec
 from pathlib import Path
 
-BASE_DIR = Path(os.path.dirname(os.path.realpath(__file__)))
+import toml
 
-PRODUCT_NAME = "Anime1-LocalServer"
-AUTHOR = "XFY9326"
-VERSION = "0.0.0.8"
+BASE_DIR = Path(os.path.dirname(os.path.realpath(__file__)))
+PROJECT_CONFIG = toml.load(BASE_DIR.joinpath("pyproject.toml"))
+
+PRODUCT_NAME = PROJECT_CONFIG["tool"]["poetry"]["name"]
+AUTHOR = ', '.join(PROJECT_CONFIG["tool"]["poetry"]["authors"])
+VERSION = PROJECT_CONFIG["tool"]["poetry"]["version"]
 BUILD_DIR = "build"
 MAIN_ENTRY = BASE_DIR.joinpath("tray.py")
 ICON_PATH = BASE_DIR.joinpath("assets", "icon.png")
@@ -26,9 +28,6 @@ EXCLUDE_MODULES = {
 }
 
 if __name__ == "__main__":
-    if find_spec("nuitka") is None:
-        assert os.system(f"{sys.executable} -m pip install nuitka") == 0, "Pip nuitka install failed!"
-
     NO_IMPORT_MODULES = list()
     NO_IMPORT_MODULES.extend(EXCLUDE_MODULES["all"])
     if platform.system() == "Windows":
@@ -40,7 +39,6 @@ if __name__ == "__main__":
 
     # noinspection SpellCheckingInspection
     args = [
-        "--remove-output",
         "--onefile",
         f"--nofollow-import-to={','.join(NO_IMPORT_MODULES)}",
         "--assume-yes-for-downloads",

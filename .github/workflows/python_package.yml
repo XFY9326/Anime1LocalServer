@@ -14,16 +14,19 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - name: Setup Poetry
+        shell: pwsh
+        run: pipx install poetry
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-          cache: "pip"
-          cache-dependency-path: requirements*.txt
+          cache: "poetry"
 
       - name: Setup Environment Variables
         shell: pwsh
@@ -33,7 +36,7 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "PYTHON_VERSION=$pythonVersion"
 
       - name: Cache Nuitka cache directory
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ env.NUITKA_CACHE_DIR }}
           key: ${{ runner.os }}-python-${{ env.PYTHON_VERSION }}-nuitka-${{ github.sha }}
@@ -44,13 +47,11 @@ jobs:
 
       - name: Install dependencies
         shell: pwsh
-        run: |
-          python -m pip install --upgrade pip wheel setuptools
-          python -m pip install -r requirements.txt
+        run: poetry install
 
       - name: Build package
         shell: pwsh
-        run: python build.py
+        run: poetry run python build.py
 
       - name: Upload release
         uses: softprops/action-gh-release@v1

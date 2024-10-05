@@ -9,7 +9,7 @@ from functools import cmp_to_key
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from pathlib import Path
-from typing import Optional, Callable, Any, Mapping
+from typing import Optional, Callable, Any, Mapping, Coroutine
 from urllib import parse
 
 import aiohttp
@@ -63,11 +63,12 @@ class Video:
 @dataclasses.dataclass(frozen=True)
 class RemoteVideo:
     url: str
+    ok: bool
     status: int
     headers: Mapping[str, str]
     content_type: str
     stream: aiohttp.StreamReader
-    on_close: Callable[[], None]
+    wait_for_close: Callable[[], Coroutine[Any, Any, None]]
 
 
 class Anime1API:
@@ -339,11 +340,12 @@ class Anime1API:
         headers["X-Forwarded-For"] = video.url
         return RemoteVideo(
             url=video.url,
+            ok=response.ok,
             status=response.status,
             headers=headers,
             content_type=response.content_type,
             stream=response.content,
-            on_close=response.close
+            wait_for_close=response.wait_for_close
         )
 
     async def close_client(self) -> None:
@@ -712,8 +714,10 @@ class Anime1WebApp:
                 result = await anime1_server.parse_url(base_uri, url)
                 return web.json_response(result)
             except aiohttp.ClientResponseError as e:
+                aiohttp.log.server_logger.error("Url parser error", exc_info=e)
                 return web.Response(status=e.status, reason=e.message)
             except aiohttp.ClientConnectorError as e:
+                aiohttp.log.server_logger.error("Url parser error", exc_info=e)
                 raise web.HTTPServiceUnavailable(reason=e.strerror)
 
         @routes.get(path="/l")
@@ -724,8 +728,10 @@ class Anime1WebApp:
                 result = await anime1_server.get_video_category_list(base_uri, show_external)
                 return web.json_response(result)
             except aiohttp.ClientResponseError as e:
+                aiohttp.log.server_logger.error("External parser error", exc_info=e)
                 return web.Response(status=e.status, reason=e.message)
             except aiohttp.ClientConnectorError as e:
+                aiohttp.log.server_logger.error("External parser error", exc_info=e)
                 raise web.HTTPServiceUnavailable(reason=e.strerror)
 
         @routes.get("/c/{category_id}")
@@ -743,8 +749,10 @@ class Anime1WebApp:
                     content_type=result.content_type
                 )
             except aiohttp.ClientResponseError as e:
+                aiohttp.log.server_logger.error("Category error", exc_info=e)
                 return web.Response(status=e.status, reason=e.message)
             except aiohttp.ClientConnectorError as e:
+                aiohttp.log.server_logger.error("Category error", exc_info=e)
                 raise web.HTTPServiceUnavailable(reason=e.strerror)
 
         @routes.get("/v/{post_id}")
@@ -752,30 +760,36 @@ class Anime1WebApp:
             post_id = request.match_info["post_id"]
             header_range: str | None = Anime1WebApp._get_header(request, "range", must_exists=False)
             header_if_range: str | None = Anime1WebApp._get_header(request, "if_range", must_exists=False)
-            remote_video: RemoteVideo | None = None
             try:
-                try:
-                    remote_video = await anime1_server.open_video(post_id, header_range, header_if_range)
-                except aiohttp.ClientResponseError as e:
-                    return web.Response(status=e.status, reason=e.message)
-                except aiohttp.ClientConnectorError as e:
-                    raise web.HTTPServiceUnavailable(reason=e.strerror)
+                remote_video = await anime1_server.open_video(post_id, header_range, header_if_range)
+            except aiohttp.ClientResponseError as e:
+                aiohttp.log.server_logger.error("Video error", exc_info=e)
+                return web.Response(status=e.status, reason=e.message)
+            except aiohttp.ClientConnectorError as e:
+                aiohttp.log.server_logger.error("Video error", exc_info=e)
+                raise web.HTTPServiceUnavailable(reason=e.strerror)
+            try:
+                if request.transport is None or request.transport.is_closing():
+                    aiohttp.log.server_logger.error("Request closed")
+                    return web.Response(status=HTTPStatus.BAD_REQUEST, reason="Request closed")
+                if not remote_video.ok:
+                    aiohttp.log.server_logger.error("Video error: response not ok")
+                    return web.Response(status=remote_video.status, reason="Proxy response not ok")
+
                 response = web.StreamResponse(status=remote_video.status, headers=remote_video.headers)
                 response.content_type = remote_video.content_type
+
                 await response.prepare(request)
                 async for chunk in remote_video.stream.iter_any():
                     chunk: bytes
-                    await response.write(chunk)
-                    await asyncio.sleep(0.001)
+                    if request.transport is None or request.transport.is_closing():
+                        return response
+                    else:
+                        await response.write(chunk)
                 await response.write_eof()
                 return response
             finally:
-                # noinspection PyBroadException
-                try:
-                    if remote_video is not None:
-                        remote_video.on_close()
-                except:
-                    pass
+                await remote_video.wait_for_close()
 
         return routes
 
@@ -841,6 +855,6 @@ class Anime1WebApp:
 
 if __name__ == "__main__":
     try:
-        Anime1WebApp(None, True, False).run("127.0.0.1", 8520)
+        Anime1WebApp(None, True, True).run("127.0.0.1", 8520)
     except KeyboardInterrupt:
         pass
