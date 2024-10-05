@@ -24,22 +24,17 @@ Install dependencies
 (It's recommended to install dependencies in venv instead of global environment)
 
 ```shell
-pip install -r requirements.txt
+pip install poetry
+poetry install --only main
 ```
 
 Launch local server in terminal
 
 ```shell
-python main.py
+poetry run python main.py
 ```
 
-Launch local server in system tray
-
-```shell
-python tray.py
-```
-
-## Packaging
+## System tray and packaging
 
 *This is not necessary unless you want a better using experience.*
 
@@ -51,10 +46,17 @@ Build with [Nuitka](https://github.com/Nuitka/Nuitka)
 - imageio
 - Nuitka compilers (See [Nuitka](https://github.com/Nuitka/Nuitka))
 
+Install all dependencies
+
+```shell
+poetry install
+```
+
 Build
 
 ```shell
-python build.py
+poetry install
+poetry run python build.py
 ```
 
 You will find single executable file under `./build` folder
