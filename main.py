@@ -575,6 +575,10 @@ class Anime1Server:
                     del self._video_cache[k]
         return video
 
+    def _clear_video_cache(self, post_id: str) -> None:
+        if post_id in self._video_cache:
+            del self._video_cache[post_id]
+
     async def get_video_category_list(self, base_uri: str, show_external: bool = False) -> list[dict[str, any]]:
         result = []
         for i in await self._api.get_video_category_list():
@@ -596,7 +600,11 @@ class Anime1Server:
 
     async def open_video(self, post_id: str, bytes_range: str | None, bytes_if_range: str | None) -> RemoteVideo:
         video = await self._get_video(post_id)
-        return await self._api.open_video(video, bytes_range, bytes_if_range)
+        try:
+            return await self._api.open_video(video, bytes_range, bytes_if_range)
+        except aiohttp.ClientResponseError or aiohttp.ClientConnectorError as e:
+            self._clear_video_cache(post_id)
+            raise e
 
     async def reset_connection(self) -> None:
         await self._api.close_client()
