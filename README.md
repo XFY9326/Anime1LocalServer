@@ -4,6 +4,10 @@ Local video server for anime1
 
 Watch anime in local video player
 
+## Attention
+
+It is now more recommended to use [Anime1Proxy](https://github.com/XFY9326/Anime1Proxy), which is written in Kotlin, is faster and supports HTTP/2.
+
 ## Requirements
 
 - Python 3.10
